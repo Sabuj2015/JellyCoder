@@ -43,6 +43,29 @@ QUALITY_HEIGHT_MAP = {
 }
 
 
+def _safe_float(value: object) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _safe_fraction(value: object) -> Optional[float]:
+    if not isinstance(value, str) or "/" not in value:
+        return None
+    num_str, den_str = value.split("/", 1)
+    num = _safe_float(num_str)
+    den = _safe_float(den_str)
+    if num is None or not den:
+        return None
+    fps = num / den
+    return fps if fps else None
+
+
 @dataclass(slots=True)
 class MediaInfo:
     frames: Optional[int]
@@ -153,11 +176,11 @@ def discover_videos(base_dir: Path, ignore_dir: Optional[Path]) -> List[Path]:
 def format_size(num_bytes: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB", "PB"]
     size = float(num_bytes)
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
+    for unit in units[:-1]:
+        if size < 1024:
             return f"{size:.2f} {unit}"
         size /= 1024
-    return f"{size:.2f} PB"
+    return f"{size:.2f} {units[-1]}"
 
 
 def build_output_path(src: Path, base_input: Path, overwrite: bool, output_root: Optional[Path], extension: str) -> Path:
@@ -258,30 +281,14 @@ def probe_media_info(path: Path) -> MediaInfo:
             if isinstance(nb_frames, str) and nb_frames.isdigit():
                 total_frames = int(nb_frames)
 
-            duration_value = stream.get("duration")
-            if isinstance(duration_value, str):
-                try:
-                    duration_sec = float(duration_value)
-                except ValueError:
-                    duration_sec = None
+            duration_candidate = _safe_float(stream.get("duration"))
+            if duration_candidate is not None:
+                duration_sec = duration_candidate
 
             if total_frames is None:
-                avg_frame_rate = stream.get("avg_frame_rate")
-                if (
-                    isinstance(avg_frame_rate, str)
-                    and "/" in avg_frame_rate
-                    and duration_sec is not None
-                ):
-                    num_str, den_str = avg_frame_rate.split("/", 1)
-                    try:
-                        num = float(num_str)
-                        den = float(den_str)
-                        if den:
-                            fps = num / den
-                            if fps:
-                                total_frames = int(duration_sec * fps)
-                    except ValueError:
-                        pass
+                fps = _safe_fraction(stream.get("avg_frame_rate"))
+                if fps and duration_sec is not None:
+                    total_frames = int(duration_sec * fps)
         if codec_type == "video" and (primary_width is None or primary_height is None):
             width = stream.get("width")
             if isinstance(width, int) and primary_width is None:
@@ -293,12 +300,9 @@ def probe_media_info(path: Path) -> MediaInfo:
             codec_name = stream.get("codec_name")
             if isinstance(codec_name, str):
                 audio_codec = codec_name.lower()
-            stream_bitrate = stream.get("bit_rate")
-            if isinstance(stream_bitrate, str):
-                try:
-                    audio_bitrate_kbps = float(stream_bitrate) / 1000.0
-                except ValueError:
-                    audio_bitrate_kbps = None
+            stream_bitrate = _safe_float(stream.get("bit_rate"))
+            if stream_bitrate is not None:
+                audio_bitrate_kbps = stream_bitrate / 1000.0
         elif codec_type == "subtitle":
             codec_name = stream.get("codec_name")
             if isinstance(codec_name, str):
@@ -310,20 +314,14 @@ def probe_media_info(path: Path) -> MediaInfo:
 
     bitrate_kbps: Optional[float] = None
     format_section = data.get("format", {})
-    bit_rate_value = format_section.get("bit_rate")
-    if isinstance(bit_rate_value, str):
-        try:
-            bitrate_kbps = float(bit_rate_value) / 1000.0
-        except ValueError:
-            bitrate_kbps = None
+    bit_rate_value = _safe_float(format_section.get("bit_rate"))
+    if bit_rate_value is not None:
+        bitrate_kbps = bit_rate_value / 1000.0
 
     if duration_sec is None:
-        format_duration = format_section.get("duration")
-        if isinstance(format_duration, str):
-            try:
-                duration_sec = float(format_duration)
-            except ValueError:
-                duration_sec = None
+        duration_candidate = _safe_float(format_section.get("duration"))
+        if duration_candidate is not None:
+            duration_sec = duration_candidate
 
     return MediaInfo(
         frames=total_frames,
@@ -604,17 +602,16 @@ def encode_video(
                         target_height,
                     )
                 if target_bitrate_kbps and source_height:
-                    scale_ratio = target_height / source_height
-                    if scale_ratio < 1.0:
-                        adjusted = max(int(target_bitrate_kbps * scale_ratio * scale_ratio), MIN_TARGET_BITRATE_KBPS)
-                        if adjusted != target_bitrate_kbps:
-                            logging.debug(
-                                "Adjusting target bitrate from %s kbps to %s kbps based on scale ratio %.3f.",
-                                target_bitrate_kbps,
-                                adjusted,
-                                scale_ratio,
-                            )
-                            target_bitrate_kbps = adjusted
+                    scale_ratio = min(target_height / source_height, 1.0)
+                    adjusted = max(int(target_bitrate_kbps * scale_ratio * scale_ratio), MIN_TARGET_BITRATE_KBPS)
+                    if adjusted != target_bitrate_kbps:
+                        logging.debug(
+                            "Adjusting target bitrate from %s kbps to %s kbps based on scale ratio %.3f.",
+                            target_bitrate_kbps,
+                            adjusted,
+                            scale_ratio,
+                        )
+                        target_bitrate_kbps = adjusted
             else:
                 logging.info(
                     "Source height %sp is already <= target %sp; no scaling applied.",
@@ -695,8 +692,7 @@ def encode_video(
 
         cmd.extend(audio_args)
 
-        if subtitle_args:
-            cmd.extend(subtitle_args)
+        cmd.extend(subtitle_args or [])
 
         cmd.extend([
             "-map_metadata",
@@ -713,7 +709,7 @@ def encode_video(
     logging.info("Encoding %s -> %s", src, dst)
     if total_frames:
         logging.info("Estimated frames to process: %s", total_frames)
-    elif total_duration:
+    if not total_frames and total_duration:
         logging.info("Estimated duration to process: %.1f seconds", total_duration)
     if media_info.bitrate_kbps:
         logging.info("Source video bitrate ≈ %.0f kbps", media_info.bitrate_kbps)
@@ -725,32 +721,26 @@ def encode_video(
         (True, False, "Hardware decode (system frames)"),
         (False, False, "CPU decode"),
     )
+    success = False
     last_error: Optional[subprocess.CalledProcessError] = None
     for index, (use_hw_decode, force_hw_format, label) in enumerate(attempts):
         cmd = build_ffmpeg_cmd(use_hw_decode, force_hw_format)
         logging.debug("Attempting encode via %s", label)
         try:
             run_ffmpeg_with_progress(cmd, total_frames, total_duration)
-            last_error = None
+            success = True
             break
         except subprocess.CalledProcessError as exc:
+            last_error = exc
             if temp_dst.exists():
                 try:
                     temp_dst.unlink()
                 except OSError:
                     pass
-            last_error = exc
             if index < len(attempts) - 1:
                 logging.warning("%s path failed; attempting fallback.", label)
-                continue
-            stdout_output = getattr(exc, "stdout", None)
-            if stdout_output is None:
-                stdout_output = getattr(exc, "output", "")
-            raise RuntimeError(
-                f"ffmpeg failed for {src}:\nSTDOUT:\n{stdout_output}\nSTDERR:\n{exc.stderr}"
-            ) from exc
 
-    if last_error is not None:
+    if not success and last_error is not None:
         stdout_output = getattr(last_error, "stdout", None)
         if stdout_output is None:
             stdout_output = getattr(last_error, "output", "")
