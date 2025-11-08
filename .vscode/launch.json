@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Video Reducer: CLI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "video_reducer.cli",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Video Reducer: encode_videos.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/encode_videos.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}
