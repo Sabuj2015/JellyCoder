@@ -75,7 +75,7 @@ python encode_videos.py --input D:\media
 
 ## Development
 
-- Run `python -m pytest` before committing; coverage is enforced at 100%.
+- Run `python -m pytest` and `flake8` before committing; coverage is enforced at 100%.
 - `python -m video_reducer --help` verifies CLI wiring after refactors.
 - VS Code launchers in `.vscode/launch.json` provide ready-to-run debug sessions.
 

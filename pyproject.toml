@@ -8,13 +8,32 @@ version = "0.1.0"
 description = "Video reduction tool"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "0x78f1935" }]
+keywords = ["ffmpeg", "video", "encoding", "compression"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Video",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/0x78f1935/JellyCoder"
+Repository = "https://github.com/0x78f1935/JellyCoder"
+Issues = "https://github.com/0x78f1935/JellyCoder/issues"
 
 [project.scripts]
 encode-videos = "video_reducer.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "flake8", "build", "twine"]
 
 [tool.setuptools]
 packages = ["video_reducer"]
@@ -31,3 +50,7 @@ source = ["video_reducer", "encode_videos"]
 [tool.coverage.report]
 show_missing = true
 fail_under = 100
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E203", "W503"]
