@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from logging.handlers import MemoryHandler
+
 from .core import QUALITY_PRESETS, ReducerConfig, reduce_videos
 
 BACKEND_CHOICES = ["auto", "nvenc", "x264", "qsv", "amf"]
@@ -112,7 +114,15 @@ def main(argv: Optional[list[str]] = None) -> None:
     args = parse_args(argv)
 
     log_level = getattr(logging, args.log_level.upper(), DEFAULT_LOG_LEVEL)
-    logging.basicConfig(format=LOG_FORMAT, level=log_level)
+    formatter = logging.Formatter(LOG_FORMAT)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    memory_handler = MemoryHandler(capacity=10000, flushLevel=logging.CRITICAL + 1)
+    logging.basicConfig(
+        level=log_level,
+        handlers=[stream_handler, memory_handler],
+        force=True,
+    )
 
     if args.input:
         input_path = Path(args.input).expanduser().resolve()
@@ -126,6 +136,26 @@ def main(argv: Optional[list[str]] = None) -> None:
     backend = args.backend
     if not args.input:
         backend = _prompt_backend(default=backend)
+
+    if overwrite:
+        log_dir = input_path
+    else:
+        if args.output:
+            log_dir = Path(args.output).expanduser()
+        else:
+            log_dir = Path.cwd() / "output" / input_path.name
+        log_dir = log_dir.resolve(strict=False)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "video_reducer.log"
+
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
+    memory_handler.setTarget(file_handler)
+    memory_handler.flush()
+    root_logger.removeHandler(memory_handler)
+    memory_handler.close()
 
     config = ReducerConfig(
         input_path=input_path,

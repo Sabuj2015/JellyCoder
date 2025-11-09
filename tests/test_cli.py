@@ -117,6 +117,7 @@ def test_main_with_args(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     assert cfg.preferred_codec == "h264"
     assert cfg.quality == "1080p"
     assert cfg.encoder_backend == "nvenc"
+    assert (tmp_path / "video_reducer.log").exists()
 
 
 def test_main_interactive(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -147,6 +148,57 @@ def test_main_interactive(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert cfg.preferred_codec is None
     assert cfg.quality == "480p"
     assert cfg.encoder_backend == "qsv"
+    assert (tmp_path / "video_reducer.log").exists()
+
+
+def test_main_writes_log_to_output_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    namespace = argparse.Namespace(
+        input=str(tmp_path),
+        overwrite=False,
+        output=output_dir,
+        max_workers=1,
+        log_level="info",
+        codec="auto",
+        quality="auto",
+        backend="auto",
+    )
+    captured = {}
+
+    monkeypatch.setattr(cli, "parse_args", lambda argv=None: namespace)
+    monkeypatch.setattr(cli, "reduce_videos", lambda config: captured.update({"config": config}))
+
+    cli.main([])
+    cfg = captured["config"]
+    assert cfg.output_root == output_dir
+    log_path = output_dir / "video_reducer.log"
+    assert log_path.exists()
+
+
+def test_main_writes_log_to_default_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    input_dir = tmp_path / "videos"
+    input_dir.mkdir()
+    namespace = argparse.Namespace(
+        input=str(input_dir),
+        overwrite=False,
+        output=None,
+        max_workers=1,
+        log_level="info",
+        codec="auto",
+        quality=None,
+        backend="auto",
+    )
+    captured = {}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "parse_args", lambda argv=None: namespace)
+    monkeypatch.setattr(cli, "reduce_videos", lambda config: captured.update({"config": config}))
+
+    cli.main([])
+    cfg = captured["config"]
+    assert cfg.output_root is None
+    log_path = tmp_path / "output" / input_dir.name / "video_reducer.log"
+    assert log_path.exists()
 
 
 def test_package_main_entry(monkeypatch: pytest.MonkeyPatch) -> None:
