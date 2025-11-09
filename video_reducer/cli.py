@@ -7,6 +7,8 @@ from typing import Optional
 
 from .core import QUALITY_PRESETS, ReducerConfig, reduce_videos
 
+BACKEND_CHOICES = ["auto", "nvenc", "x264", "qsv", "amf"]
+
 DEFAULT_LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
@@ -40,6 +42,20 @@ def _prompt_quality(default: str = "auto") -> str:
         if raw in QUALITY_PRESETS:
             return raw
         logging.warning("Invalid quality selection '%s'. Choose one of: %s.", raw, ", ".join(QUALITY_PRESETS))
+
+
+def _prompt_backend(default: str = "auto") -> str:
+    choices = "/".join(BACKEND_CHOICES)
+    default_normalized = default.lower() if default else "auto"
+    while True:
+        raw = input(f"Select encoder backend ({choices}) [{default_normalized}]: ").strip().lower()
+        if not raw:
+            return default_normalized
+        if raw in BACKEND_CHOICES:
+            return raw
+        logging.warning(
+            "Invalid backend selection '%s'. Choose one of: %s.", raw, ", ".join(BACKEND_CHOICES)
+        )
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -77,6 +93,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Preferred codec for NVENC encoding (default: auto).",
     )
     parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=BACKEND_CHOICES,
+        help="Video encoder backend (default: auto).",
+    )
+    parser.add_argument(
         "--quality",
         default=None,
         type=str.lower,
@@ -101,6 +123,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     quality = args.quality or "auto"
     if not args.input:
         quality = _prompt_quality(default=quality)
+    backend = args.backend
+    if not args.input:
+        backend = _prompt_backend(default=backend)
 
     config = ReducerConfig(
         input_path=input_path,
@@ -109,6 +134,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         max_workers=args.max_workers,
         preferred_codec=None if args.codec == "auto" else args.codec,
         quality=quality,
+        encoder_backend=backend,
     )
 
     reduce_videos(config)

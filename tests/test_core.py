@@ -21,6 +21,7 @@ def make_media_info(**overrides: object) -> core.MediaInfo:
         height=1080,
         audio_codec="aac",
         audio_bitrate_kbps=192.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -43,7 +44,7 @@ def test_ensure_ffmpeg_available_missing(monkeypatch: pytest.MonkeyPatch) -> Non
         core.ensure_ffmpeg_available()
 
 
-# select_nvenc_encoder
+# select_encoder
 
 class FakeCompletedProcess:
     def __init__(self, stdout: str) -> None:
@@ -56,58 +57,164 @@ def fake_run_factory(stdout: str) -> Callable[..., FakeCompletedProcess]:
     return _runner
 
 
-def test_select_nvenc_encoder_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    output = "\n V..... hevc_nvenc\n V..... h264_nvenc\n"
+def test_select_encoder_auto_prefers_nvenc(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... hevc_nvenc\n V..... h264_nvenc\n V..... libx264\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
-    selection = core.select_nvenc_encoder()
+    selection = core.select_encoder()
     assert selection.encoder == "h264_nvenc"
+    assert selection.backend == "nvenc"
     assert selection.output_extension == ".mp4"
 
 
-def test_select_nvenc_encoder_preferred(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_encoder_respects_preferred_codec(monkeypatch: pytest.MonkeyPatch) -> None:
     output = "\n V..... h264_nvenc\n V..... hevc_nvenc\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
-    selection = core.select_nvenc_encoder("hevc")
+    selection = core.select_encoder("nvenc", "hevc")
     assert selection.encoder == "hevc_nvenc"
     assert selection.output_extension == ".mkv"
 
 
-def test_select_nvenc_encoder_invalid_preference() -> None:
-    with pytest.raises(ValueError):
-        core.select_nvenc_encoder("vp9")
-
-
-def test_select_nvenc_encoder_preferred_missing(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    output = "\n V..... h264_nvenc\n"
+def test_select_encoder_prefers_h264_when_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... hevc_nvenc\n V..... h264_nvenc\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
-    with caplog.at_level(logging.WARNING):
-        selection = core.select_nvenc_encoder("hevc")
+    selection = core.select_encoder("nvenc", "h264")
     assert selection.encoder == "h264_nvenc"
 
 
-def test_select_nvenc_encoder_preferred_warning_failure(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_select_encoder_invalid_preference() -> None:
+    with pytest.raises(ValueError):
+        core.select_encoder("nvenc", "vp9")
+
+
+def test_select_encoder_preferred_missing_logs(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    output = "\n V..... h264_nvenc\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        selection = core.select_encoder("nvenc", "hevc")
+    assert selection.encoder == "h264_nvenc"
+    assert any("Requested NVENC codec" in message for message in caplog.messages)
+
+
+def test_select_encoder_auto_falls_back_to_x264(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... libx264\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    selection = core.select_encoder()
+    assert selection.encoder == core.X264_ENCODER_NAME
+    assert selection.backend == "x264"
+
+
+def test_select_encoder_qsv(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... h264_qsv\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    selection = core.select_encoder("qsv")
+    assert selection.encoder == "h264_qsv"
+    assert selection.backend == "qsv"
+
+
+def test_select_encoder_qsv_hevc_preference_fallback(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    output = "\n V..... h264_qsv\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        selection = core.select_encoder("qsv", "hevc")
+    assert selection.encoder == "h264_qsv"
+    assert any("Requested QSV codec" in message for message in caplog.messages)
+
+
+def test_select_encoder_amf_hevc_preference_fallback(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    output = "\n V..... h264_amf\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        selection = core.select_encoder("amf", "hevc")
+    assert selection.encoder == "h264_amf"
+    assert any("Requested AMF codec" in message for message in caplog.messages)
+
+
+def test_select_encoder_amf_hevc_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... hevc_amf\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    selection = core.select_encoder("amf", "hevc")
+    assert selection.encoder == "hevc_amf"
+
+
+def test_select_encoder_x264_warns_on_hevc(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    output = "\n V..... libx264\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        selection = core.select_encoder("x264", "hevc")
+    assert selection.encoder == core.X264_ENCODER_NAME
+    assert any("does not support HEVC" in message for message in caplog.messages)
+
+
+def test_select_encoder_x264_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... h264_qsv\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with pytest.raises(RuntimeError):
+        core.select_encoder("x264")
+
+
+def test_select_encoder_auto_no_encoders(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = ""
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with pytest.raises(RuntimeError):
+        core.select_encoder()
+
+
+def test_select_encoder_invalid_backend() -> None:
+    with pytest.raises(ValueError):
+        core.select_encoder("invalid")
+
+
+def test_select_encoder_nvenc_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = "\n V..... libx264\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with pytest.raises(RuntimeError):
+        core.select_encoder("nvenc")
+
+
+def test_select_encoder_nvenc_missing_with_preference_warns(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     output = "\n V..... libx264\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
     with caplog.at_level(logging.WARNING):
         with pytest.raises(RuntimeError):
-            core.select_nvenc_encoder("hevc")
-    assert any("not available" in message for message in caplog.messages)
+            core.select_encoder("nvenc", "hevc")
+    assert any("Requested NVENC codec hevc" in message for message in caplog.messages)
 
 
-def test_select_nvenc_encoder_run_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_encoder_nvenc_appends_missing_candidates(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr(core, "PREFERRED_NVENC_ENCODERS", ["h264_nvenc", "foo_nvenc", "hevc_nvenc"])
+    output = "\n V..... foo_nvenc\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        selection = core.select_encoder("nvenc", "hevc")
+    assert selection.encoder == "foo_nvenc"
+    assert any("Falling back" in message for message in caplog.messages)
+
+
+def test_select_encoder_qsv_missing_warns(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    output = "\n V..... libx264\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError):
+            core.select_encoder("qsv", "hevc")
+    assert any("Requested QSV codec" in message for message in caplog.messages)
+
+
+def test_select_encoder_amf_missing_warns(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    output = "\n V..... libx264\n"
+    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError):
+            core.select_encoder("amf", "hevc")
+    assert any("Requested AMF codec" in message for message in caplog.messages)
+
+
+def test_select_encoder_run_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     def _runner(*_: object, **__: object) -> FakeCompletedProcess:
         raise subprocess.CalledProcessError(1, ["ffmpeg"])
 
     monkeypatch.setattr(core.subprocess, "run", _runner)
     with pytest.raises(RuntimeError):
-        core.select_nvenc_encoder()
-
-
-def test_select_nvenc_encoder_no_nvenc(monkeypatch: pytest.MonkeyPatch) -> None:
-    output = "\n V..... libx264\n"
-    monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
-    with pytest.raises(RuntimeError):
-        core.select_nvenc_encoder()
+        core.select_encoder()
 
 
 # discover_videos
@@ -119,6 +226,8 @@ def test_discover_videos_with_ignore(tmp_path: Path) -> None:
     nested.mkdir(parents=True)
     allowed = base / "movie.mkv"
     allowed.touch()
+    allowed_wmv = base / "concert.WMV"
+    allowed_wmv.touch()
     skipped = ignore / "skip.mp4"
     skipped.touch()
     nested_file = nested / "skip2.mkv"
@@ -127,7 +236,7 @@ def test_discover_videos_with_ignore(tmp_path: Path) -> None:
     other.touch()
 
     found = core.discover_videos(base, ignore)
-    assert found == [allowed]
+    assert found == sorted([allowed, allowed_wmv])
 
 
 def test_discover_videos_without_ignore(tmp_path: Path) -> None:
@@ -135,13 +244,15 @@ def test_discover_videos_without_ignore(tmp_path: Path) -> None:
     base.mkdir()
     file1 = base / "a.MKV"
     file1.touch()
+    file_extra = base / "c.mwv"
+    file_extra.touch()
     sub = base / "sub"
     sub.mkdir()
     file2 = sub / "b.mp4"
     file2.touch()
 
     found = core.discover_videos(base, None)
-    assert found == [file1.resolve(), file2.resolve()]
+    assert found == sorted([file1.resolve(), file2.resolve(), file_extra.resolve()])
 
 
 def test_discover_videos_ignore_root(tmp_path: Path) -> None:
@@ -233,6 +344,7 @@ def test_probe_media_info_parses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 "codec_type": "audio",
                 "codec_name": "aac",
                 "bit_rate": "192000",
+                "channels": 6,
             },
             {
                 "codec_type": "subtitle",
@@ -252,6 +364,7 @@ def test_probe_media_info_parses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     info = core.probe_media_info(tmp_path / "good.mkv")
     assert info.frames == 299
     assert info.audio_codec == "aac"
+    assert info.audio_channels == 6
     assert "mjpeg" in info.attached_pic_codecs
     assert info.subtitle_codecs == ["srt"]
     assert info.data_stream_codecs == ["bin"]
@@ -483,6 +596,9 @@ def test_encode_video_transcodes_audio_when_needed(tmp_path: Path, monkeypatch: 
     command = commands[0]
     b_index = command.index("-b:v")
     assert command[b_index + 1] == "0"
+    assert "-ac" in command
+    ac_index = command.index("-ac")
+    assert command[ac_index + 1] == "2"
 
 
 def test_encode_video_overwrite_with_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -604,7 +720,11 @@ def test_reduce_videos_no_videos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     config = core.ReducerConfig(input_path=base)
 
     monkeypatch.setattr(core, "ensure_ffmpeg_available", lambda: None)
-    monkeypatch.setattr(core, "select_nvenc_encoder", lambda *_: core.NvencSelection("h264_nvenc", ".mp4"))
+    monkeypatch.setattr(
+        core,
+        "select_encoder",
+        lambda *_: core.EncoderSelection("h264_nvenc", ".mp4", "nvenc", "h264"),
+    )
     monkeypatch.setattr(core, "discover_videos", lambda *_: [])
     called = {"process": False}
     monkeypatch.setattr(core, "process_videos", lambda **_: called.__setitem__("process", True))
@@ -621,7 +741,11 @@ def test_reduce_videos_runs_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyP
     config = core.ReducerConfig(input_path=base, overwrite=False, max_workers=3, quality="1080p")
 
     monkeypatch.setattr(core, "ensure_ffmpeg_available", lambda: None)
-    monkeypatch.setattr(core, "select_nvenc_encoder", lambda *_: core.NvencSelection("hevc_nvenc", ".mkv"))
+    monkeypatch.setattr(
+        core,
+        "select_encoder",
+        lambda *_: core.EncoderSelection("hevc_nvenc", ".mkv", "nvenc", "hevc"),
+    )
     monkeypatch.setattr(core, "discover_videos", lambda *_: [video])
 
     recorded = {}
@@ -647,7 +771,11 @@ def test_reduce_videos_overwrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     config = core.ReducerConfig(input_path=base, overwrite=True)
 
     monkeypatch.setattr(core, "ensure_ffmpeg_available", lambda: None)
-    monkeypatch.setattr(core, "select_nvenc_encoder", lambda *_: core.NvencSelection("h264_nvenc", ".mp4"))
+    monkeypatch.setattr(
+        core,
+        "select_encoder",
+        lambda *_: core.EncoderSelection("h264_nvenc", ".mp4", "nvenc", "h264"),
+    )
     monkeypatch.setattr(core, "discover_videos", lambda *_: [video])
 
     captured = {}

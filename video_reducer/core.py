@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -13,7 +14,9 @@ from functools import partial
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-VIDEO_EXTENSIONS = {".mkv", ".mp4"}
+from array import array
+
+VIDEO_EXTENSIONS = {".mkv", ".mp4", ".wmv", ".mwv"}
 NVENC_PRESET = "p6"
 NVENC_RC_MODE = "vbr_hq"
 NVENC_CQ = 24
@@ -41,6 +44,16 @@ QUALITY_HEIGHT_MAP = {
     "480p": 480,
     "360p": 360,
 }
+SUPPORTED_ENCODER_BACKENDS = ("auto", "nvenc", "x264", "qsv", "amf")
+X264_ENCODER_NAME = "libx264"
+X264_DEFAULT_PRESET = "medium"
+QSV_ENCODERS = {"h264": "h264_qsv", "hevc": "hevc_qsv"}
+QSV_DEFAULT_PRESET = "medium"
+AMF_ENCODERS = {"h264": "h264_amf", "hevc": "hevc_amf"}
+AMF_DEFAULT_QUALITY = "quality"
+DEFAULT_ENCODER_PRIORITY = ("nvenc", "qsv", "amf", "x264")
+EFFECTIVE_MONO_SAMPLE_SECONDS = 90
+EFFECTIVE_MONO_IMBALANCE_THRESHOLD_DB = 18.0
 
 
 def _safe_float(value: object) -> Optional[float]:
@@ -66,6 +79,74 @@ def _safe_fraction(value: object) -> Optional[float]:
     return fps if fps else None
 
 
+def _detect_pseudo_mono_channel(
+    path: Path,
+    sample_seconds: int = EFFECTIVE_MONO_SAMPLE_SECONDS,
+    imbalance_threshold_db: float = EFFECTIVE_MONO_IMBALANCE_THRESHOLD_DB,
+) -> Optional[int]:
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-vn",
+        "-ac",
+        "2",
+        "-f",
+        "s16le",
+        "-t",
+        str(sample_seconds),
+        "pipe:1",
+    ]
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE)
+    except FileNotFoundError:
+        logging.debug("ffmpeg not found while sampling audio for %s.", path)
+        return None
+    except subprocess.CalledProcessError as exc:
+        logging.debug("ffmpeg failed while sampling audio for %s: %s", path, exc)
+        return None
+
+    data = result.stdout
+
+    usable = len(data) - (len(data) % 4)
+    if usable < 4:
+        return None
+
+    samples = array("h")
+    samples.frombytes(data[:usable])
+
+    left_sq = 0
+    right_sq = 0
+    limit = len(samples) - (len(samples) % 2)
+    for idx in range(0, limit, 2):
+        left = samples[idx]
+        right = samples[idx + 1]
+        left_sq += left * left
+        right_sq += right * right
+
+    if left_sq == 0 and right_sq == 0:
+        return None
+
+    dominant = 0 if left_sq >= right_sq else 1
+    quiet = right_sq if dominant == 0 else left_sq
+    loud = left_sq if dominant == 0 else right_sq
+
+    if quiet == 0:
+        return dominant
+
+    ratio = loud / quiet
+    if ratio <= 1.0:
+        return None
+
+    imbalance_db = 10.0 * math.log10(ratio)
+    if imbalance_db >= imbalance_threshold_db:
+        return dominant
+    return None
+
+
 @dataclass(slots=True)
 class MediaInfo:
     frames: Optional[int]
@@ -75,6 +156,7 @@ class MediaInfo:
     height: Optional[int]
     audio_codec: Optional[str]
     audio_bitrate_kbps: Optional[float]
+    audio_channels: Optional[int]
     subtitle_codecs: List[str]
     video_codecs: List[str]
     attached_pic_codecs: List[str]
@@ -82,9 +164,11 @@ class MediaInfo:
 
 
 @dataclass(slots=True)
-class NvencSelection:
+class EncoderSelection:
     encoder: str
     output_extension: str
+    backend: str
+    codec_family: str
 
 
 @dataclass(slots=True)
@@ -95,6 +179,7 @@ class ReducerConfig:
     max_workers: int = DEFAULT_MAX_WORKERS
     preferred_codec: Optional[str] = None
     quality: str = "auto"
+    encoder_backend: str = "auto"
 
 
 def ensure_ffmpeg_available() -> None:
@@ -102,20 +187,23 @@ def ensure_ffmpeg_available() -> None:
         raise RuntimeError("ffmpeg not found in PATH. Please install it before running this command.")
 
 
-def select_nvenc_encoder(preferred: Optional[str] = None) -> NvencSelection:
-    preferred_encoder: Optional[str] = None
-    if preferred:
-        normalized = preferred.lower()
-        mapping = {
-            "h264": "h264_nvenc",
-            "avc": "h264_nvenc",
-            "hevc": "hevc_nvenc",
-            "h265": "hevc_nvenc",
-        }
-        if normalized not in mapping:
-            raise ValueError(f"Unsupported codec preference: {preferred}")
-        preferred_encoder = mapping[normalized]
+def _normalize_codec(preferred: Optional[str]) -> Optional[str]:
+    if preferred is None:
+        return None
+    mapping = {
+        "h264": "h264",
+        "avc": "h264",
+        "x264": "h264",
+        "hevc": "hevc",
+        "h265": "hevc",
+    }
+    normalized = preferred.lower()
+    if normalized not in mapping:
+        raise ValueError(f"Unsupported codec preference: {preferred}")
+    return mapping[normalized]
 
+
+def _query_ffmpeg_video_encoders() -> set[str]:
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-encoders"],
@@ -136,25 +224,120 @@ def select_nvenc_encoder(preferred: Optional[str] = None) -> NvencSelection:
         parts = stripped.split()
         if len(parts) >= 2:
             available_encoders.add(parts[1])
+    return available_encoders
 
-    candidate_order = PREFERRED_NVENC_ENCODERS.copy()
-    if preferred_encoder:
-        candidate_order = [preferred_encoder] + [enc for enc in candidate_order if enc != preferred_encoder]
 
-    for encoder in candidate_order:
-        if encoder in available_encoders:
-            extension = ".mkv" if encoder == "hevc_nvenc" else ".mp4"
-            return NvencSelection(encoder=encoder, output_extension=extension)
+def _make_selection(encoder: str, backend: str) -> EncoderSelection:
+    codec_family = "hevc" if "hevc" in encoder else "h264"
+    extension = ".mkv" if codec_family == "hevc" else ".mp4"
+    return EncoderSelection(encoder=encoder, output_extension=extension, backend=backend, codec_family=codec_family)
 
-    if preferred_encoder and preferred_encoder not in available_encoders:
-        logging.warning(
-            "Requested encoder %s is not available. Falling back to first supported NVENC encoder.",
-            preferred_encoder,
+
+def select_encoder(backend: str = "auto", preferred: Optional[str] = None) -> EncoderSelection:
+    backend_normalized = (backend or "auto").lower()
+    if backend_normalized not in SUPPORTED_ENCODER_BACKENDS:
+        raise ValueError(f"Unsupported encoder backend: {backend}")
+
+    preferred_family = _normalize_codec(preferred)
+    available_encoders = _query_ffmpeg_video_encoders()
+
+    def select_nvenc() -> Optional[EncoderSelection]:
+        candidate_order: List[str]
+        if preferred_family == "hevc":
+            candidate_order = ["hevc_nvenc", "h264_nvenc"]
+        elif preferred_family == "h264":
+            candidate_order = ["h264_nvenc", "hevc_nvenc"]
+        else:
+            candidate_order = list(PREFERRED_NVENC_ENCODERS)
+        for candidate in PREFERRED_NVENC_ENCODERS:
+            if candidate not in candidate_order:
+                candidate_order.append(candidate)
+
+        for candidate in candidate_order:
+            if candidate in available_encoders:
+                if preferred_family and not candidate.startswith(preferred_family):
+                    logging.warning(
+                        "Requested NVENC codec %s is not available. Falling back to %s.",
+                        preferred_family,
+                        candidate,
+                    )
+                return _make_selection(candidate, "nvenc")
+
+        if preferred_family:
+            logging.warning(
+                "Requested NVENC codec %s is not available.",
+                preferred_family,
+            )
+        return None
+
+    def select_qsv() -> Optional[EncoderSelection]:
+        if preferred_family == "hevc":
+            order = [QSV_ENCODERS["hevc"], QSV_ENCODERS["h264"]]
+        else:
+            order = [QSV_ENCODERS["h264"], QSV_ENCODERS["hevc"]]
+        for candidate in order:
+            if candidate in available_encoders:
+                if preferred_family and preferred_family not in candidate:
+                    logging.warning(
+                        "Requested QSV codec %s is not available. Falling back to %s.",
+                        preferred_family,
+                        candidate,
+                    )
+                return _make_selection(candidate, "qsv")
+        if preferred_family:
+            logging.warning("Requested QSV codec %s is not available.", preferred_family)
+        return None
+
+    def select_amf() -> Optional[EncoderSelection]:
+        if preferred_family == "hevc":
+            order = [AMF_ENCODERS["hevc"], AMF_ENCODERS["h264"]]
+        else:
+            order = [AMF_ENCODERS["h264"], AMF_ENCODERS["hevc"]]
+        for candidate in order:
+            if candidate in available_encoders:
+                if preferred_family and preferred_family not in candidate:
+                    logging.warning(
+                        "Requested AMF codec %s is not available. Falling back to %s.",
+                        preferred_family,
+                        candidate,
+                    )
+                return _make_selection(candidate, "amf")
+        if preferred_family:
+            logging.warning("Requested AMF codec %s is not available.", preferred_family)
+        return None
+
+    def select_x264() -> Optional[EncoderSelection]:
+        if preferred_family == "hevc":
+            logging.warning("libx264 does not support HEVC; encoding will use H.264 instead.")
+        if X264_ENCODER_NAME in available_encoders:
+            return _make_selection(X264_ENCODER_NAME, "x264")
+        return None
+
+    backend_selectors = {
+        "nvenc": select_nvenc,
+        "x264": select_x264,
+        "qsv": select_qsv,
+        "amf": select_amf,
+    }
+
+    if backend_normalized == "auto":
+        for candidate_backend in DEFAULT_ENCODER_PRIORITY:
+            selector = backend_selectors[candidate_backend]
+            selection = selector()
+            if selection:
+                return selection
+        raise RuntimeError("ffmpeg does not expose a supported hardware encoder; libx264 is also unavailable.")
+
+    selection = backend_selectors[backend_normalized]()
+    if selection:
+        return selection
+
+    if backend_normalized == "nvenc":
+        raise RuntimeError(
+            "ffmpeg does not expose an NVENC encoder (h264_nvenc or hevc_nvenc). Install an NVENC-enabled build and ensure NVIDIA drivers are up to date."
         )
 
-    raise RuntimeError(
-        "ffmpeg does not expose an NVENC encoder (h264_nvenc or hevc_nvenc). Install an NVENC-enabled build and ensure NVIDIA drivers are up to date."
-    )
+    raise RuntimeError(f"ffmpeg does not expose the requested encoder backend: {backend_normalized}")
 
 
 def discover_videos(base_dir: Path, ignore_dir: Optional[Path]) -> List[Path]:
@@ -215,6 +398,7 @@ def probe_media_info(path: Path) -> MediaInfo:
             height=None,
             audio_codec=None,
             audio_bitrate_kbps=None,
+            audio_channels=None,
             subtitle_codecs=[],
             video_codecs=[],
             attached_pic_codecs=[],
@@ -230,6 +414,7 @@ def probe_media_info(path: Path) -> MediaInfo:
             height=None,
             audio_codec=None,
             audio_bitrate_kbps=None,
+            audio_channels=None,
             subtitle_codecs=[],
             video_codecs=[],
             attached_pic_codecs=[],
@@ -248,6 +433,7 @@ def probe_media_info(path: Path) -> MediaInfo:
             height=None,
             audio_codec=None,
             audio_bitrate_kbps=None,
+            audio_channels=None,
             subtitle_codecs=[],
             video_codecs=[],
             attached_pic_codecs=[],
@@ -259,6 +445,7 @@ def probe_media_info(path: Path) -> MediaInfo:
     duration_sec: Optional[float] = None
     audio_codec: Optional[str] = None
     audio_bitrate_kbps: Optional[float] = None
+    audio_channels: Optional[int] = None
     primary_width: Optional[int] = None
     primary_height: Optional[int] = None
     subtitle_codecs: List[str] = []
@@ -303,6 +490,9 @@ def probe_media_info(path: Path) -> MediaInfo:
             stream_bitrate = _safe_float(stream.get("bit_rate"))
             if stream_bitrate is not None:
                 audio_bitrate_kbps = stream_bitrate / 1000.0
+            channels_value = stream.get("channels")
+            if isinstance(channels_value, int):
+                audio_channels = channels_value
         elif codec_type == "subtitle":
             codec_name = stream.get("codec_name")
             if isinstance(codec_name, str):
@@ -331,6 +521,7 @@ def probe_media_info(path: Path) -> MediaInfo:
         height=primary_height,
         audio_codec=audio_codec,
         audio_bitrate_kbps=audio_bitrate_kbps,
+        audio_channels=audio_channels,
         subtitle_codecs=subtitle_codecs,
         video_codecs=video_codecs,
         attached_pic_codecs=attached_pic_codecs,
@@ -467,12 +658,21 @@ def encode_video(
     encoder: str,
     output_extension: str,
     quality: str,
+    *,
+    _allow_encoder_fallback: bool = True,
+    _media_info_override: Optional[MediaInfo] = None,
 ) -> None:
-    media_info = probe_media_info(src)
+    media_info = _media_info_override or probe_media_info(src)
 
     effective_extension = output_extension
     is_mp4_output = effective_extension.lower() == ".mp4"
     subtitle_args: List[str] = ["-c:s", "copy"]
+
+    encoder_lower = encoder.lower()
+    is_nvenc_encoder = encoder_lower.endswith("_nvenc")
+    is_qsv_encoder = encoder_lower.endswith("_qsv")
+    is_amf_encoder = encoder_lower.endswith("_amf")
+    is_x264_encoder = encoder_lower == X264_ENCODER_NAME
 
     if is_mp4_output:
         subtitle_codecs = [code.lower() for code in media_info.subtitle_codecs]
@@ -547,7 +747,7 @@ def encode_video(
 
     target_bitrate_kbps: Optional[int] = None
     if media_info.bitrate_kbps:
-        ratio = HEVC_BITRATE_RATIO if encoder == "hevc_nvenc" else H264_BITRATE_RATIO
+        ratio = HEVC_BITRATE_RATIO if "hevc" in encoder_lower else H264_BITRATE_RATIO
         proposed = int(media_info.bitrate_kbps * ratio)
         target_bitrate_kbps = max(proposed, MIN_TARGET_BITRATE_KBPS)
         ceiling = int(media_info.bitrate_kbps * 0.95)
@@ -564,20 +764,44 @@ def encode_video(
         audio_description_parts.append(f"~{media_info.audio_bitrate_kbps:.0f} kbps")
     audio_description = " ".join(audio_description_parts) if audio_description_parts else "unknown"
 
-    audio_can_copy = media_info.audio_codec is not None
+    audio_codec_lower = media_info.audio_codec.lower() if media_info.audio_codec else None
+    audio_channels = media_info.audio_channels
+    actual_mono_source = audio_channels is not None and audio_channels < 2
+
+    pseudo_mono_channel: Optional[int] = None
+    if (
+        not actual_mono_source
+        and audio_codec_lower
+        and (audio_channels is None or audio_channels >= 2)
+    ):
+        pseudo_mono_channel = _detect_pseudo_mono_channel(src)
+
+    force_stereo = actual_mono_source or pseudo_mono_channel is not None
+
+    audio_filter_arg: Optional[str] = None
+    if pseudo_mono_channel is not None:
+        channel_token = f"c{pseudo_mono_channel}"
+        audio_filter_arg = f"pan=stereo|c0={channel_token}|c1={channel_token}"
+
+    audio_can_copy = audio_codec_lower is not None and not force_stereo
     if audio_can_copy and is_mp4_output:
-        audio_can_copy = media_info.audio_codec in MP4_ALLOWED_AUDIO_CODECS
+        audio_can_copy = audio_codec_lower in MP4_ALLOWED_AUDIO_CODECS
 
     if audio_can_copy:
         audio_args = ["-c:a", "copy"]
         logging.info("Audio stream will be copied (%s).", audio_description)
     else:
-        audio_args = ["-c:a", "aac", "-b:a", AUDIO_BITRATE]
-        logging.info(
-            "Audio stream will be transcoded to AAC %s (original %s).",
-            AUDIO_BITRATE,
-            audio_description,
-        )
+        target_channels = 2
+        audio_args = ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ac", str(target_channels)]
+        log_message = "Audio stream will be transcoded to AAC %s (original %s)." % (AUDIO_BITRATE, audio_description)
+        if pseudo_mono_channel is not None:
+            channel_label = "left" if pseudo_mono_channel == 0 else "right"
+            log_message += f" Detected {channel_label} channel dominance; duplicating {channel_label} channel to both outputs."
+        elif actual_mono_source:
+            log_message += " Mono source detected; forcing stereo output."
+        elif audio_channels and audio_channels > target_channels:
+            log_message += f" Downmixing from {audio_channels} channels to stereo."
+        logging.info(log_message)
 
     normalized_quality = quality.lower()
     scale_filter: Optional[str] = None
@@ -644,21 +868,26 @@ def encode_video(
             encoder,
         ])
 
-        nvenc_profile = NVENC_PROFILE_MAP.get(encoder)
-        if nvenc_profile:
-            cmd.extend(["-profile:v", nvenc_profile])
-
-        if NVENC_TUNE:
-            cmd.extend(["-tune", NVENC_TUNE])
-
-        cmd.extend([
-            "-preset",
-            NVENC_PRESET,
-            "-rc",
-            NVENC_RC_MODE,
-            "-cq",
-            str(NVENC_CQ),
-        ])
+        if is_nvenc_encoder:
+            nvenc_profile = NVENC_PROFILE_MAP.get(encoder)
+            if nvenc_profile:
+                cmd.extend(["-profile:v", nvenc_profile])
+            if NVENC_TUNE:
+                cmd.extend(["-tune", NVENC_TUNE])
+            cmd.extend([
+                "-preset",
+                NVENC_PRESET,
+                "-rc",
+                NVENC_RC_MODE,
+                "-cq",
+                str(NVENC_CQ),
+            ])
+        elif is_x264_encoder:
+            cmd.extend(["-preset", X264_DEFAULT_PRESET])
+        elif is_qsv_encoder:
+            cmd.extend(["-preset", QSV_DEFAULT_PRESET])
+        elif is_amf_encoder:
+            cmd.extend(["-quality", AMF_DEFAULT_QUALITY])
 
         if target_bitrate_kbps:
             video_bitrate = f"{target_bitrate_kbps}k"
@@ -675,12 +904,13 @@ def encode_video(
         else:
             cmd.extend(["-b:v", "0"])
 
-        if NVENC_LOOKAHEAD:
-            cmd.extend(["-rc-lookahead", NVENC_LOOKAHEAD])
-        if NVENC_SPATIAL_AQ:
-            cmd.extend(["-spatial_aq", NVENC_SPATIAL_AQ])
-        if NVENC_TEMPORAL_AQ:
-            cmd.extend(["-temporal_aq", NVENC_TEMPORAL_AQ])
+        if is_nvenc_encoder:
+            if NVENC_LOOKAHEAD:
+                cmd.extend(["-rc-lookahead", NVENC_LOOKAHEAD])
+            if NVENC_SPATIAL_AQ:
+                cmd.extend(["-spatial_aq", NVENC_SPATIAL_AQ])
+            if NVENC_TEMPORAL_AQ:
+                cmd.extend(["-temporal_aq", NVENC_TEMPORAL_AQ])
 
         if scale_filter:
             cmd.extend(["-vf", scale_filter])
@@ -689,6 +919,9 @@ def encode_video(
             "-pix_fmt",
             "yuv420p",
         ])
+
+        if audio_filter_arg:
+            cmd.extend(["-af", audio_filter_arg])
 
         cmd.extend(audio_args)
 
@@ -716,11 +949,18 @@ def encode_video(
     if target_bitrate_kbps:
         logging.info("Target video bitrate set to %s kbps", target_bitrate_kbps)
 
-    attempts = (
-        (True, True, "Hardware decode (GPU frames)"),
-        (True, False, "Hardware decode (system frames)"),
-        (False, False, "CPU decode"),
-    )
+    if is_nvenc_encoder:
+        attempts = (
+            (True, True, "Hardware decode (GPU frames)"),
+            (True, False, "Hardware decode (system frames)"),
+            (False, False, "CPU decode"),
+        )
+    elif is_qsv_encoder:
+        attempts = ((False, False, "Intel QSV"),)
+    elif is_amf_encoder:
+        attempts = ((False, False, "AMD AMF"),)
+    else:
+        attempts = ((False, False, "Software decode"),)
     success = False
     last_error: Optional[subprocess.CalledProcessError] = None
     for index, (use_hw_decode, force_hw_format, label) in enumerate(attempts):
@@ -740,10 +980,42 @@ def encode_video(
             if index < len(attempts) - 1:
                 logging.warning("%s path failed; attempting fallback.", label)
 
+    fallback_encoder: Optional[str] = None
+    fallback_label: Optional[str] = None
+    if is_nvenc_encoder or is_qsv_encoder or is_amf_encoder:
+        fallback_encoder = X264_ENCODER_NAME
+        if is_nvenc_encoder:
+            fallback_label = "NVENC"
+        elif is_qsv_encoder:
+            fallback_label = "QSV"
+        else:
+            fallback_label = "AMF"
+
     if not success and last_error is not None:
         stdout_output = getattr(last_error, "stdout", None)
         if stdout_output is None:
             stdout_output = getattr(last_error, "output", "")
+        if (
+            fallback_encoder
+            and _allow_encoder_fallback
+            and encoder_lower != fallback_encoder
+        ):
+            logging.warning(
+                "%s encoding failed after all retries; falling back to %s.",
+                fallback_label,
+                fallback_encoder,
+            )
+            encode_video(
+                src=src,
+                dst=dst,
+                overwrite=overwrite,
+                encoder=fallback_encoder,
+                output_extension=output_extension,
+                quality=quality,
+                _allow_encoder_fallback=False,
+                _media_info_override=media_info,
+            )
+            return
         raise RuntimeError(
             f"ffmpeg failed for {src}:\nSTDOUT:\n{stdout_output}\nSTDERR:\n{last_error.stderr}"
         ) from last_error
@@ -820,11 +1092,12 @@ def reduce_videos(config: ReducerConfig) -> None:
         raise ValueError(f"Input path is not a directory: {base_input}")
 
     ensure_ffmpeg_available()
-    selection = select_nvenc_encoder(config.preferred_codec)
+    selection = select_encoder(config.encoder_backend, config.preferred_codec)
     quality_choice = (config.quality or "auto").lower()
     logging.info(
-        "Using %s for video encoding via NVENC (output extension %s).",
+        "Using %s via %s backend (output extension %s).",
         selection.encoder,
+        selection.backend.upper(),
         selection.output_extension,
     )
     logging.info("Quality preset set to '%s'.", quality_choice)
@@ -843,7 +1116,8 @@ def reduce_videos(config: ReducerConfig) -> None:
     logging.info("Beginning scan of %s.", base_input)
     videos = discover_videos(base_input, ignore_dir)
     if not videos:
-        logging.info("No MKV or MP4 files found.")
+        known_extensions = ", ".join(sorted(ext.upper().lstrip(".") for ext in VIDEO_EXTENSIONS))
+        logging.info("No %s files found.", known_extensions)
         return
 
     logging.info("Found %d video(s) to process.", len(videos))

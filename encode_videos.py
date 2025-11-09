@@ -6,4 +6,3 @@ from video_reducer.cli import main
 
 if __name__ == "__main__":
     main()
-NVENC_TUNE = "hq"

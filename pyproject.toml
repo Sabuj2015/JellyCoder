@@ -10,8 +10,15 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.scripts]
+encode-videos = "video_reducer.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov"]
+
+[tool.setuptools]
+packages = ["video_reducer"]
+py-modules = ["encode_videos"]
 
 [tool.pytest.ini_options]
 addopts = "-q --cov=video_reducer --cov=encode_videos --cov-report=term-missing"

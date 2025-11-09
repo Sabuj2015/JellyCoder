@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import time
+from array import array
 from pathlib import Path
 
 import pytest
@@ -23,10 +24,72 @@ def runner_with_output(stdout: str):
     return _run
 
 
-def test_select_nvenc_encoder_skips_noise_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+class _BytesResult:
+    def __init__(self, data: bytes) -> None:
+        self.stdout = data
+
+
+def _pcm_bytes(left: int, right: int, frames: int) -> bytes:
+    samples = array("h")
+    for _ in range(frames):
+        samples.extend((left, right))
+    return samples.tobytes()
+
+
+def test_detect_pseudo_mono_channel_missing_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _missing(*_: object, **__: object) -> None:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(core.subprocess, "run", _missing)
+    assert core._detect_pseudo_mono_channel(Path("missing.wmv")) is None
+
+
+def test_detect_pseudo_mono_channel_handles_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise(*_: object, **__: object) -> None:
+        raise subprocess.CalledProcessError(1, ["ffmpeg"])
+
+    monkeypatch.setattr(core.subprocess, "run", _raise)
+    assert core._detect_pseudo_mono_channel(Path("failure.wmv")) is None
+
+
+def test_detect_pseudo_mono_channel_insufficient_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: _BytesResult(b"\x00\x00"))
+    assert core._detect_pseudo_mono_channel(Path("small.wmv")) is None
+
+
+def test_detect_pseudo_mono_channel_all_zero_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: _BytesResult(_pcm_bytes(0, 0, 5)))
+    assert core._detect_pseudo_mono_channel(Path("zero.wmv")) is None
+
+
+def test_detect_pseudo_mono_channel_balanced(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _pcm_bytes(2000, 2000, 10)
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: _BytesResult(data))
+    assert core._detect_pseudo_mono_channel(Path("balanced.wmv")) is None
+
+
+def test_detect_pseudo_mono_channel_small_imbalance(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _pcm_bytes(2000, 1500, 12)
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: _BytesResult(data))
+    assert core._detect_pseudo_mono_channel(Path("mild_imbalance.wmv")) is None
+
+
+def test_detect_pseudo_mono_channel_detects_left(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _pcm_bytes(3000, 10, 20)
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: _BytesResult(data))
+    assert core._detect_pseudo_mono_channel(Path("dominant_left.wmv")) == 0
+
+
+def test_detect_pseudo_mono_channel_detects_zero_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _pcm_bytes(2500, 0, 15)
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: _BytesResult(data))
+    assert core._detect_pseudo_mono_channel(Path("right_silent.wmv")) == 0
+
+
+def test_select_encoder_skips_noise_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     output = "\n  ---- encoders ----\n A..... thing\n V\n S..... other\n V..... hevc_nvenc\n"
     monkeypatch.setattr(core.subprocess, "run", runner_with_output(output))
-    selection = core.select_nvenc_encoder()
+    selection = core.select_encoder("nvenc", "hevc")
     assert selection.encoder == "hevc_nvenc"
     assert selection.output_extension == ".mkv"
 
@@ -59,7 +122,7 @@ def test_probe_media_info_handles_value_errors(monkeypatch: pytest.MonkeyPatch, 
             },
             {
                 "codec_type": "audio",
-                "codec_name": "aac",
+                    "codec_name": "aac",
                 "bit_rate": "bad",
             },
             {
@@ -292,6 +355,7 @@ def test_encode_video_resets_target_bitrate_when_ratio_vanishes(tmp_path: Path, 
         height=480,
         audio_codec="aac",
         audio_bitrate_kbps=192.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -326,13 +390,14 @@ def test_encode_video_scaling_adjusts_bitrate(tmp_path: Path, monkeypatch: pytes
     src.write_bytes(b"x" * 500)
     dst = tmp_path / "scale.mp4"
     info = core.MediaInfo(
-        frames=300,
-        duration=10.0,
-        bitrate_kbps=4000.0,
-        width=1920,
-        height=1080,
+        frames=50,
+        duration=3.0,
+        bitrate_kbps=1800.0,
+    width=1920,
+    height=1080,
         audio_codec="aac",
-        audio_bitrate_kbps=192.0,
+        audio_bitrate_kbps=96.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -377,6 +442,7 @@ def test_encode_video_skips_when_destination_exists(tmp_path: Path, monkeypatch:
         height=None,
         audio_codec=None,
         audio_bitrate_kbps=None,
+        audio_channels=None,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -409,19 +475,19 @@ def test_encode_video_height_unknown_logs(tmp_path: Path, monkeypatch: pytest.Mo
     src.write_bytes(b"x" * 400)
     dst = tmp_path / "unknown.mp4"
     info = core.MediaInfo(
-        frames=120,
-        duration=5.0,
-        bitrate_kbps=6000.0,
+        frames=300,
+        duration=10.0,
+        bitrate_kbps=4000.0,
         width=1920,
-        height=None,
+        height=1080,
         audio_codec="aac",
-        audio_bitrate_kbps=128.0,
+        audio_bitrate_kbps=192.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
         data_stream_codecs=[],
     )
-    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
 
     def fake_run(cmd: list[str], *_: object) -> None:
         Path(cmd[-1]).write_bytes(b"z" * 100)
@@ -452,6 +518,7 @@ def test_encode_video_height_no_scale(tmp_path: Path, monkeypatch: pytest.Monkey
         height=360,
         audio_codec="aac",
         audio_bitrate_kbps=96.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -488,6 +555,7 @@ def test_encode_video_handles_missing_audio_metadata(tmp_path: Path, monkeypatch
         height=720,
         audio_codec=None,
         audio_bitrate_kbps=None,
+        audio_channels=None,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -512,6 +580,188 @@ def test_encode_video_handles_missing_audio_metadata(tmp_path: Path, monkeypatch
     assert any("Audio stream will be transcoded" in msg for msg in caplog.messages)
 
 
+def test_encode_video_mono_audio_forces_stereo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    src = tmp_path / "mono.mkv"
+    src.write_bytes(b"m" * 150)
+    dst = tmp_path / "mono.mp4"
+    info = core.MediaInfo(
+        frames=120,
+        duration=5.0,
+        bitrate_kbps=2000.0,
+        width=1280,
+        height=720,
+        audio_codec="aac",
+        audio_bitrate_kbps=96.0,
+        audio_channels=1,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"m" * 80)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    with caplog.at_level(logging.INFO):
+        core.encode_video(
+            src=src,
+            dst=dst,
+            overwrite=False,
+            encoder="h264_nvenc",
+            output_extension=".mp4",
+            quality="auto",
+        )
+
+    encoded = commands[0]
+    assert "-ac" in encoded
+    ac_index = encoded.index("-ac")
+    assert encoded[ac_index + 1] == "2"
+    assert any("forcing stereo" in msg.lower() for msg in caplog.messages)
+
+
+def test_encode_video_pseudo_mono_duplication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    src = tmp_path / "fake_stereo.wmv"
+    src.write_bytes(b"w" * 200)
+    dst = tmp_path / "fake_stereo.mp4"
+    info = core.MediaInfo(
+        frames=90,
+        duration=4.0,
+        bitrate_kbps=1500.0,
+        width=640,
+        height=360,
+        audio_codec="aac",
+        audio_bitrate_kbps=96.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["wmv3"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+    monkeypatch.setattr(core, "_detect_pseudo_mono_channel", lambda path, **_: 0)
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"w")
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    with caplog.at_level(logging.INFO):
+        core.encode_video(
+            src=src,
+            dst=dst,
+            overwrite=False,
+            encoder="h264_nvenc",
+            output_extension=".mp4",
+            quality="auto",
+        )
+
+    encoded = commands[0]
+    assert "-af" in encoded
+    af_index = encoded.index("-af")
+    assert encoded[af_index + 1] == "pan=stereo|c0=c0|c1=c0"
+    assert any("duplicating left channel" in msg.lower() for msg in caplog.messages)
+
+
+def test_encode_video_surround_downmixes_to_stereo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    src = tmp_path / "surround.mkv"
+    src.write_bytes(b"s" * 180)
+    dst = tmp_path / "surround.mp4"
+    info = core.MediaInfo(
+        frames=200,
+        duration=6.0,
+        bitrate_kbps=2500.0,
+        width=1280,
+        height=720,
+        audio_codec="dts",
+        audio_bitrate_kbps=512.0,
+        audio_channels=6,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"s" * 120)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    with caplog.at_level(logging.INFO):
+        core.encode_video(
+            src=src,
+            dst=dst,
+            overwrite=False,
+            encoder="h264_nvenc",
+            output_extension=".mp4",
+            quality="auto",
+        )
+
+    encoded = commands[0]
+    assert "-ac" in encoded
+    ac_index = encoded.index("-ac")
+    assert encoded[ac_index + 1] == "2"
+    assert any("downmixing" in msg.lower() for msg in caplog.messages)
+
+
+def test_encode_video_qsv_fallbacks_to_x264(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    src = tmp_path / "qsv.mkv"
+    src.write_bytes(b"q" * 200)
+    dst = tmp_path / "qsv.mp4"
+    info = core.MediaInfo(
+        frames=60,
+        duration=2.0,
+        bitrate_kbps=1500.0,
+        width=640,
+        height=360,
+        audio_codec="aac",
+        audio_bitrate_kbps=128.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        commands.append(cmd)
+        if "h264_qsv" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr="fail")
+        Path(cmd[-1]).write_bytes(b"x")
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    with caplog.at_level(logging.WARNING):
+        core.encode_video(
+            src=src,
+            dst=dst,
+            overwrite=False,
+            encoder="h264_qsv",
+            output_extension=".mp4",
+            quality="auto",
+        )
+
+    assert any("h264_qsv" in cmd for cmd in commands)
+    assert any("libx264" in cmd for cmd in commands)
+    assert dst.exists()
+    assert any("falling back" in msg.lower() for msg in caplog.messages)
+
+
 def test_encode_video_missing_output_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "vanish.mkv"
     src.write_bytes(b"d" * 200)
@@ -524,6 +774,7 @@ def test_encode_video_missing_output_raises(tmp_path: Path, monkeypatch: pytest.
         height=720,
         audio_codec="aac",
         audio_bitrate_kbps=160.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -555,6 +806,7 @@ def test_encode_video_missing_output_raises(tmp_path: Path, monkeypatch: pytest.
             encoder="h264_nvenc",
             output_extension=".mp4",
             quality="auto",
+            _allow_encoder_fallback=False,
         )
     assert "Expected output file missing" in str(exc.value)
 
@@ -571,6 +823,7 @@ def test_encode_video_final_attempt_runtime_without_stdout(tmp_path: Path, monke
         height=1080,
         audio_codec="aac",
         audio_bitrate_kbps=128.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -587,10 +840,11 @@ def test_encode_video_final_attempt_runtime_without_stdout(tmp_path: Path, monke
         core.encode_video(
             src=src,
             dst=dst,
-            overwrite=False,
+            overwrite=True,
             encoder="h264_nvenc",
             output_extension=".mp4",
             quality="auto",
+            _allow_encoder_fallback=False,
         )
     message = str(exc.value)
     assert "STDOUT" in message
@@ -609,6 +863,7 @@ def test_encode_video_final_attempt_runtime_with_stdout(tmp_path: Path, monkeypa
         height=1080,
         audio_codec="aac",
         audio_bitrate_kbps=160.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -642,10 +897,11 @@ def test_encode_video_final_attempt_runtime_with_stdout(tmp_path: Path, monkeypa
         core.encode_video(
             src=src,
             dst=dst,
-            overwrite=False,
+            overwrite=True,
             encoder="h264_nvenc",
             output_extension=".mp4",
             quality="auto",
+            _allow_encoder_fallback=False,
         )
     assert "failing output" in str(exc.value)
 
@@ -662,6 +918,7 @@ def test_encode_video_optional_nvenc_flags(tmp_path: Path, monkeypatch: pytest.M
         height=480,
         audio_codec="aac",
         audio_bitrate_kbps=96.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -698,6 +955,228 @@ def test_encode_video_optional_nvenc_flags(tmp_path: Path, monkeypatch: pytest.M
     assert "-temporal_aq" not in encoded
 
 
+def test_encode_video_nvenc_without_optional_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    src = tmp_path / "plain.mkv"
+    src.write_bytes(b"p" * 140)
+    dst = tmp_path / "plain.mp4"
+    info = core.MediaInfo(
+        frames=50,
+        duration=3.0,
+        bitrate_kbps=1800.0,
+        width=1280,
+        height=720,
+        audio_codec="aac",
+        audio_bitrate_kbps=128.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+    monkeypatch.setattr(core, "NVENC_TUNE", "")
+    monkeypatch.setattr(core, "NVENC_LOOKAHEAD", "")
+    monkeypatch.setattr(core, "NVENC_SPATIAL_AQ", "")
+    monkeypatch.setattr(core, "NVENC_TEMPORAL_AQ", "")
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"p" * 80)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    core.encode_video(
+        src=src,
+        dst=dst,
+        overwrite=False,
+        encoder="h264_nvenc",
+        output_extension=".mp4",
+        quality="auto",
+    )
+    encoded = commands[0]
+    assert "-tune" not in encoded
+    assert "-rc-lookahead" not in encoded
+    assert "-spatial_aq" not in encoded
+    assert "-temporal_aq" not in encoded
+
+
+def test_encode_video_with_x264_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    src = tmp_path / "soft.mkv"
+    src.write_bytes(b"x" * 200)
+    dst = tmp_path / "soft.mp4"
+    info = core.MediaInfo(
+        frames=60,
+        duration=4.0,
+        bitrate_kbps=2400.0,
+        width=1280,
+        height=720,
+        audio_codec="aac",
+        audio_bitrate_kbps=128.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+    call_state = {"count": 0}
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        call_state["count"] += 1
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"r" * 100)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    core.encode_video(
+        src=src,
+        dst=dst,
+        overwrite=False,
+        encoder=core.X264_ENCODER_NAME,
+        output_extension=".mp4",
+        quality="auto",
+    )
+    assert call_state["count"] == 1
+    encoded = commands[0]
+    assert "-c:v" in encoded and core.X264_ENCODER_NAME in encoded
+    assert core.X264_DEFAULT_PRESET in encoded
+    assert core.NVENC_RC_MODE not in encoded
+
+
+def test_encode_video_with_qsv_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    src = tmp_path / "intel.mkv"
+    src.write_bytes(b"i" * 210)
+    dst = tmp_path / "intel.mp4"
+    info = core.MediaInfo(
+        frames=90,
+        duration=5.0,
+        bitrate_kbps=2600.0,
+        width=1920,
+        height=1080,
+        audio_codec="aac",
+        audio_bitrate_kbps=160.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+    attempts = {"count": 0}
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        attempts["count"] += 1
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"s" * 120)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    core.encode_video(
+        src=src,
+        dst=dst,
+        overwrite=False,
+        encoder=core.QSV_ENCODERS["h264"],
+        output_extension=".mp4",
+        quality="auto",
+    )
+    assert attempts["count"] == 1
+    encoded = commands[0]
+    assert core.QSV_ENCODERS["h264"] in encoded
+    assert core.QSV_DEFAULT_PRESET in encoded
+
+
+def test_encode_video_with_amf_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    src = tmp_path / "amd.mkv"
+    src.write_bytes(b"a" * 230)
+    dst = tmp_path / "amd.mp4"
+    info = core.MediaInfo(
+        frames=100,
+        duration=6.0,
+        bitrate_kbps=2800.0,
+        width=1920,
+        height=1080,
+        audio_codec="aac",
+        audio_bitrate_kbps=160.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+    attempts = {"count": 0}
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        attempts["count"] += 1
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"t" * 130)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    core.encode_video(
+        src=src,
+        dst=dst,
+        overwrite=False,
+        encoder=core.AMF_ENCODERS["h264"],
+        output_extension=".mp4",
+        quality="auto",
+    )
+    assert attempts["count"] == 1
+    encoded = commands[0]
+    assert core.AMF_ENCODERS["h264"] in encoded
+    assert "-quality" in encoded
+    assert core.AMF_DEFAULT_QUALITY in encoded
+
+
+def test_encode_video_with_other_encoder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    src = tmp_path / "other.mkv"
+    src.write_bytes(b"o" * 150)
+    dst = tmp_path / "other_out.mkv"
+    info = core.MediaInfo(
+        frames=30,
+        duration=2.0,
+        bitrate_kbps=1000.0,
+        width=640,
+        height=360,
+        audio_codec="aac",
+        audio_bitrate_kbps=96.0,
+        audio_channels=2,
+        subtitle_codecs=[],
+        video_codecs=["h264"],
+        attached_pic_codecs=[],
+        data_stream_codecs=[],
+    )
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *_: object) -> None:
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"o" * 80)
+
+    monkeypatch.setattr(core, "run_ffmpeg_with_progress", fake_run)
+
+    core.encode_video(
+        src=src,
+        dst=dst,
+        overwrite=False,
+        encoder="software_encoder",
+        output_extension=".mkv",
+        quality="auto",
+    )
+    encoded = commands[0]
+    assert "software_encoder" in encoded
+    assert "-quality" not in encoded
+
+
 def test_encode_video_non_mp4_skips_mp4_logic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "direct.mkv"
     src.write_bytes(b"h" * 180)
@@ -710,6 +1189,7 @@ def test_encode_video_non_mp4_skips_mp4_logic(tmp_path: Path, monkeypatch: pytes
         height=720,
         audio_codec="aac",
         audio_bitrate_kbps=128.0,
+        audio_channels=2,
         subtitle_codecs=["srt"],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -750,6 +1230,7 @@ def test_encode_video_scaling_adjustment_skipped(tmp_path: Path, monkeypatch: py
         height=1080,
         audio_codec="aac",
         audio_bitrate_kbps=160.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["hevc"],
         attached_pic_codecs=[],
@@ -794,6 +1275,7 @@ def test_encode_video_logs_duration_when_frames_missing(tmp_path: Path, monkeypa
         height=720,
         audio_codec="aac",
         audio_bitrate_kbps=128.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
@@ -830,6 +1312,7 @@ def test_encode_video_fallback_then_success(tmp_path: Path, monkeypatch: pytest.
         height=1080,
         audio_codec="aac",
         audio_bitrate_kbps=160.0,
+        audio_channels=2,
         subtitle_codecs=[],
         video_codecs=["h264"],
         attached_pic_codecs=[],
