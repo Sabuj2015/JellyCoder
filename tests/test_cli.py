@@ -1,5 +1,4 @@
 import argparse
-import importlib
 import runpy
 from pathlib import Path
 
@@ -8,7 +7,11 @@ import pytest
 from video_reducer import cli
 
 
-def test_prompt_for_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_prompt_for_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     inputs = iter(["", "nonexistent", str(tmp_path)])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
     with caplog.at_level("WARNING"):

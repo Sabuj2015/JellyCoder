@@ -334,7 +334,8 @@ def select_encoder(backend: str = "auto", preferred: Optional[str] = None) -> En
 
     if backend_normalized == "nvenc":
         raise RuntimeError(
-            "ffmpeg does not expose an NVENC encoder (h264_nvenc or hevc_nvenc). Install an NVENC-enabled build and ensure NVIDIA drivers are up to date."
+            "ffmpeg does not expose an NVENC encoder (h264_nvenc or hevc_nvenc). "
+            "Install an NVENC-enabled build and ensure NVIDIA drivers are up to date."
         )
 
     raise RuntimeError(f"ffmpeg does not expose the requested encoder backend: {backend_normalized}")
@@ -366,7 +367,13 @@ def format_size(num_bytes: int) -> str:
     return f"{size:.2f} {units[-1]}"
 
 
-def build_output_path(src: Path, base_input: Path, overwrite: bool, output_root: Optional[Path], extension: str) -> Path:
+def build_output_path(
+    src: Path,
+    base_input: Path,
+    overwrite: bool,
+    output_root: Optional[Path],
+    extension: str,
+) -> Path:
     relative = src.relative_to(base_input)
     target_name = relative.with_suffix(extension)
     if overwrite:
@@ -676,9 +683,8 @@ def encode_video(
 
     if is_mp4_output:
         subtitle_codecs = [code.lower() for code in media_info.subtitle_codecs]
-        unsupported_subs = [
-            code for code in subtitle_codecs if code not in MP4_ALLOWED_SUBTITLE_CODECS | MP4_CONVERTIBLE_SUBTITLE_CODECS
-        ]
+        allowed_subtitle_codecs = MP4_ALLOWED_SUBTITLE_CODECS | MP4_CONVERTIBLE_SUBTITLE_CODECS
+        unsupported_subs = [code for code in subtitle_codecs if code not in allowed_subtitle_codecs]
         if unsupported_subs:
             logging.warning(
                 "Subtitle codec(s) %s are not compatible with MP4; switching to MKV container for this file.",
@@ -796,7 +802,10 @@ def encode_video(
         log_message = "Audio stream will be transcoded to AAC %s (original %s)." % (AUDIO_BITRATE, audio_description)
         if pseudo_mono_channel is not None:
             channel_label = "left" if pseudo_mono_channel == 0 else "right"
-            log_message += f" Detected {channel_label} channel dominance; duplicating {channel_label} channel to both outputs."
+            log_message += (
+                f" Detected {channel_label} channel dominance; "
+                f"duplicating {channel_label} channel to both outputs."
+            )
         elif actual_mono_source:
             log_message += " Mono source detected; forcing stereo output."
         elif audio_channels and audio_channels > target_channels:

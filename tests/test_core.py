@@ -86,7 +86,10 @@ def test_select_encoder_invalid_preference() -> None:
         core.select_encoder("nvenc", "vp9")
 
 
-def test_select_encoder_preferred_missing_logs(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_select_encoder_preferred_missing_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     output = "\n V..... h264_nvenc\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
     with caplog.at_level(logging.WARNING):
@@ -111,7 +114,10 @@ def test_select_encoder_qsv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert selection.backend == "qsv"
 
 
-def test_select_encoder_qsv_hevc_preference_fallback(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_select_encoder_qsv_hevc_preference_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     output = "\n V..... h264_qsv\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
     with caplog.at_level(logging.WARNING):
@@ -120,7 +126,10 @@ def test_select_encoder_qsv_hevc_preference_fallback(monkeypatch: pytest.MonkeyP
     assert any("Requested QSV codec" in message for message in caplog.messages)
 
 
-def test_select_encoder_amf_hevc_preference_fallback(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_select_encoder_amf_hevc_preference_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     output = "\n V..... h264_amf\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
     with caplog.at_level(logging.WARNING):
@@ -171,7 +180,10 @@ def test_select_encoder_nvenc_missing_raises(monkeypatch: pytest.MonkeyPatch) ->
         core.select_encoder("nvenc")
 
 
-def test_select_encoder_nvenc_missing_with_preference_warns(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_select_encoder_nvenc_missing_with_preference_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     output = "\n V..... libx264\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
     with caplog.at_level(logging.WARNING):
@@ -180,8 +192,15 @@ def test_select_encoder_nvenc_missing_with_preference_warns(monkeypatch: pytest.
     assert any("Requested NVENC codec hevc" in message for message in caplog.messages)
 
 
-def test_select_encoder_nvenc_appends_missing_candidates(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    monkeypatch.setattr(core, "PREFERRED_NVENC_ENCODERS", ["h264_nvenc", "foo_nvenc", "hevc_nvenc"])
+def test_select_encoder_nvenc_appends_missing_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        core,
+        "PREFERRED_NVENC_ENCODERS",
+        ["h264_nvenc", "foo_nvenc", "hevc_nvenc"],
+    )
     output = "\n V..... foo_nvenc\n"
     monkeypatch.setattr(core.subprocess, "run", fake_run_factory(output))
     with caplog.at_level(logging.WARNING):
@@ -482,7 +501,11 @@ def test_run_ffmpeg_with_progress_failure(monkeypatch: pytest.MonkeyPatch) -> No
 
 # encode_video
 
-def test_encode_video_mp4_copy_audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_mp4_copy_audio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "input.mkv"
     src.write_bytes(b"x" * 200)
     dst = tmp_path / "output.mp4"
@@ -519,7 +542,11 @@ def test_encode_video_mp4_copy_audio(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "mov_text" in recorded
 
 
-def test_encode_video_switches_to_mkv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_switches_to_mkv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "movie.mkv"
     src.write_bytes(b"a" * 100)
     dst = tmp_path / "out" / "movie.mp4"
@@ -559,7 +586,11 @@ def test_encode_video_switches_to_mkv(tmp_path: Path, monkeypatch: pytest.Monkey
     assert final_path.stat().st_size > src.stat().st_size
 
 
-def test_encode_video_transcodes_audio_when_needed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_transcodes_audio_when_needed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "audio.mkv"
     src.write_bytes(b"m" * 150)
     dst = tmp_path / "audio.mp4"
@@ -673,7 +704,11 @@ def test_encode_video_all_attempts_fail(tmp_path: Path, monkeypatch: pytest.Monk
 
 # process_videos
 
-def test_process_videos_handles_success_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_process_videos_handles_success_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     base = tmp_path / "input"
     base.mkdir()
     ok = base / "ok.mkv"

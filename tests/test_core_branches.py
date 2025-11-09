@@ -122,7 +122,7 @@ def test_probe_media_info_handles_value_errors(monkeypatch: pytest.MonkeyPatch, 
             },
             {
                 "codec_type": "audio",
-                    "codec_name": "aac",
+                "codec_name": "aac",
                 "bit_rate": "bad",
             },
             {
@@ -314,7 +314,6 @@ def test_run_ffmpeg_with_progress_handles_empty_output(monkeypatch: pytest.Monke
         def close(self) -> None:
             self.closed = True
 
-
     class FalseyStderr:
         def __bool__(self) -> bool:
             return False
@@ -325,7 +324,6 @@ def test_run_ffmpeg_with_progress_handles_empty_output(monkeypatch: pytest.Monke
         def close(self) -> None:
             raise AssertionError("stderr should not be closed")
 
-
     class QuietProcess:
         def __init__(self) -> None:
             self.stdout = FalseyStdout()
@@ -333,7 +331,6 @@ def test_run_ffmpeg_with_progress_handles_empty_output(monkeypatch: pytest.Monke
 
         def wait(self) -> int:
             return 0
-
 
     monkeypatch.setattr(core.subprocess, "Popen", lambda *args, **kwargs: QuietProcess())
     monkeypatch.setattr(time, "time", lambda: 0.0)
@@ -343,7 +340,10 @@ def test_run_ffmpeg_with_progress_handles_empty_output(monkeypatch: pytest.Monke
     assert buffer.getvalue() == "\n"
 
 
-def test_encode_video_resets_target_bitrate_when_ratio_vanishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_encode_video_resets_target_bitrate_when_ratio_vanishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     src = tmp_path / "tiny.mkv"
     src.write_bytes(b"0" * 100)
     dst = tmp_path / "tiny.mp4"
@@ -385,7 +385,11 @@ def test_encode_video_resets_target_bitrate_when_ratio_vanishes(tmp_path: Path, 
     assert encoded[idx + 1] == "0"
 
 
-def test_encode_video_scaling_adjusts_bitrate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_scaling_adjusts_bitrate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "scale.mkv"
     src.write_bytes(b"x" * 500)
     dst = tmp_path / "scale.mp4"
@@ -393,8 +397,8 @@ def test_encode_video_scaling_adjusts_bitrate(tmp_path: Path, monkeypatch: pytes
         frames=50,
         duration=3.0,
         bitrate_kbps=1800.0,
-    width=1920,
-    height=1080,
+        width=1920,
+        height=1080,
         audio_codec="aac",
         audio_bitrate_kbps=96.0,
         audio_channels=2,
@@ -429,7 +433,11 @@ def test_encode_video_scaling_adjusts_bitrate(tmp_path: Path, monkeypatch: pytes
     assert any("Adjusting target bitrate" in msg for msg in caplog.messages)
 
 
-def test_encode_video_skips_when_destination_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_skips_when_destination_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "skip.mkv"
     src.write_bytes(b"q" * 100)
     dst = tmp_path / "skip.mp4"
@@ -470,7 +478,11 @@ def test_encode_video_skips_when_destination_exists(tmp_path: Path, monkeypatch:
     assert any("Skipping existing file" in msg for msg in caplog.messages)
 
 
-def test_encode_video_height_unknown_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_height_unknown_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "unknown.mkv"
     src.write_bytes(b"x" * 400)
     dst = tmp_path / "unknown.mp4"
@@ -479,7 +491,7 @@ def test_encode_video_height_unknown_logs(tmp_path: Path, monkeypatch: pytest.Mo
         duration=10.0,
         bitrate_kbps=4000.0,
         width=1920,
-        height=1080,
+        height=None,
         audio_codec="aac",
         audio_bitrate_kbps=192.0,
         audio_channels=2,
@@ -488,6 +500,8 @@ def test_encode_video_height_unknown_logs(tmp_path: Path, monkeypatch: pytest.Mo
         attached_pic_codecs=[],
         data_stream_codecs=[],
     )
+
+    monkeypatch.setattr(core, "probe_media_info", lambda path: info)
 
     def fake_run(cmd: list[str], *_: object) -> None:
         Path(cmd[-1]).write_bytes(b"z" * 100)
@@ -506,7 +520,11 @@ def test_encode_video_height_unknown_logs(tmp_path: Path, monkeypatch: pytest.Mo
     assert any("source height unknown" in msg for msg in caplog.messages)
 
 
-def test_encode_video_height_no_scale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_height_no_scale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "flat.mkv"
     src.write_bytes(b"m" * 300)
     dst = tmp_path / "flat.mp4"
@@ -543,7 +561,11 @@ def test_encode_video_height_no_scale(tmp_path: Path, monkeypatch: pytest.Monkey
     assert any("already <= target" in msg for msg in caplog.messages)
 
 
-def test_encode_video_handles_missing_audio_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_handles_missing_audio_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "mute.mkv"
     src.write_bytes(b"r" * 120)
     dst = tmp_path / "mute.mp4"
@@ -580,7 +602,11 @@ def test_encode_video_handles_missing_audio_metadata(tmp_path: Path, monkeypatch
     assert any("Audio stream will be transcoded" in msg for msg in caplog.messages)
 
 
-def test_encode_video_mono_audio_forces_stereo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_mono_audio_forces_stereo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "mono.mkv"
     src.write_bytes(b"m" * 150)
     dst = tmp_path / "mono.mp4"
@@ -625,7 +651,11 @@ def test_encode_video_mono_audio_forces_stereo(tmp_path: Path, monkeypatch: pyte
     assert any("forcing stereo" in msg.lower() for msg in caplog.messages)
 
 
-def test_encode_video_pseudo_mono_duplication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_pseudo_mono_duplication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "fake_stereo.wmv"
     src.write_bytes(b"w" * 200)
     dst = tmp_path / "fake_stereo.mp4"
@@ -671,7 +701,11 @@ def test_encode_video_pseudo_mono_duplication(tmp_path: Path, monkeypatch: pytes
     assert any("duplicating left channel" in msg.lower() for msg in caplog.messages)
 
 
-def test_encode_video_surround_downmixes_to_stereo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_surround_downmixes_to_stereo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "surround.mkv"
     src.write_bytes(b"s" * 180)
     dst = tmp_path / "surround.mp4"
@@ -716,7 +750,11 @@ def test_encode_video_surround_downmixes_to_stereo(tmp_path: Path, monkeypatch: 
     assert any("downmixing" in msg.lower() for msg in caplog.messages)
 
 
-def test_encode_video_qsv_fallbacks_to_x264(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_qsv_fallbacks_to_x264(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "qsv.mkv"
     src.write_bytes(b"q" * 200)
     dst = tmp_path / "qsv.mp4"
@@ -1177,7 +1215,10 @@ def test_encode_video_with_other_encoder(tmp_path: Path, monkeypatch: pytest.Mon
     assert "-quality" not in encoded
 
 
-def test_encode_video_non_mp4_skips_mp4_logic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_encode_video_non_mp4_skips_mp4_logic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     src = tmp_path / "direct.mkv"
     src.write_bytes(b"h" * 180)
     dst = tmp_path / "out" / "direct.mkv"
@@ -1218,7 +1259,11 @@ def test_encode_video_non_mp4_skips_mp4_logic(tmp_path: Path, monkeypatch: pytes
     assert encoded[-1].endswith(".mkv")
 
 
-def test_encode_video_scaling_adjustment_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_scaling_adjustment_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "steady.mkv"
     src.write_bytes(b"j" * 240)
     dst = tmp_path / "steady.mp4"
@@ -1263,7 +1308,11 @@ def test_encode_video_scaling_adjustment_skipped(tmp_path: Path, monkeypatch: py
     assert not any("Adjusting target bitrate" in message for message in caplog.messages)
 
 
-def test_encode_video_logs_duration_when_frames_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_logs_duration_when_frames_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "timed.mkv"
     src.write_bytes(b"l" * 260)
     dst = tmp_path / "timed.mp4"
@@ -1300,7 +1349,11 @@ def test_encode_video_logs_duration_when_frames_missing(tmp_path: Path, monkeypa
     assert any("Estimated duration" in message for message in caplog.messages)
 
 
-def test_encode_video_fallback_then_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_encode_video_fallback_then_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     src = tmp_path / "retry.mkv"
     src.write_bytes(b"n" * 320)
     dst = tmp_path / "retry.mp4"
@@ -1354,5 +1407,6 @@ def test_encode_video_fallback_then_success(tmp_path: Path, monkeypatch: pytest.
             quality="auto",
         )
     assert call_state["count"] == 2
+
     assert dst.exists()
     assert any("attempting fallback" in message for message in caplog.messages)
