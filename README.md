@@ -5,7 +5,7 @@
 
 ## Overview
 
-`jelly_coder` scans a folder for supported videos (`.mkv`, `.mp4`, `.wmv`, `.mwv`) and re-encodes them with size-aware defaults. It keeps subtitles/metadata, flips containers when MP4 constraints are violated, and preserves a mirrored directory tree when you choose not to overwrite in place.
+`jelly_coder` scans a folder for supported videos (`.mkv`, `.mp4`, `.wmv`, `.mwv`, `.avi`) and re-encodes them with size-aware defaults. It keeps subtitles/metadata, flips containers when MP4 constraints are violated, and preserves a mirrored directory tree when you choose not to overwrite in place.
 
 Key capabilities:
 

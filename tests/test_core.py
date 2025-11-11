@@ -247,15 +247,16 @@ def test_discover_videos_with_ignore(tmp_path: Path) -> None:
     allowed.touch()
     allowed_wmv = base / "concert.WMV"
     allowed_wmv.touch()
+    allowed_avi = base / "clip.avi"
+    allowed_avi.touch()
+    ignored_ext = base / "skip.mov"
+    ignored_ext.touch()
     skipped = ignore / "skip.mp4"
     skipped.touch()
     nested_file = nested / "skip2.mkv"
     nested_file.touch()
-    other = base / "clip.avi"
-    other.touch()
-
     found = core.discover_videos(base, ignore)
-    assert found == sorted([allowed, allowed_wmv])
+    assert found == sorted([allowed, allowed_wmv, allowed_avi])
 
 
 def test_discover_videos_without_ignore(tmp_path: Path) -> None:
@@ -265,13 +266,17 @@ def test_discover_videos_without_ignore(tmp_path: Path) -> None:
     file1.touch()
     file_extra = base / "c.mwv"
     file_extra.touch()
+    file_avi = base / "d.avi"
+    file_avi.touch()
+    file_other = base / "notes.txt"
+    file_other.touch()
     sub = base / "sub"
     sub.mkdir()
     file2 = sub / "b.mp4"
     file2.touch()
 
     found = core.discover_videos(base, None)
-    assert found == sorted([file1.resolve(), file2.resolve(), file_extra.resolve()])
+    assert found == sorted([file1.resolve(), file2.resolve(), file_extra.resolve(), file_avi.resolve()])
 
 
 def test_discover_videos_ignore_root(tmp_path: Path) -> None:

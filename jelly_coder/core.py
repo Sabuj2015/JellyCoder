@@ -16,7 +16,7 @@ from typing import Iterable, List, Optional
 
 from array import array
 
-VIDEO_EXTENSIONS = {".mkv", ".mp4", ".wmv", ".mwv"}
+VIDEO_EXTENSIONS = {".mkv", ".mp4", ".wmv", ".mwv", ".avi"}
 NVENC_PRESET = "p6"
 NVENC_RC_MODE = "vbr_hq"
 NVENC_CQ = 24
