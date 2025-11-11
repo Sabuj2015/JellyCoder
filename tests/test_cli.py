@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from video_reducer import cli
+from jelly_coder import cli
 
 
 def test_prompt_for_directory(
@@ -117,7 +117,7 @@ def test_main_with_args(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     assert cfg.preferred_codec == "h264"
     assert cfg.quality == "1080p"
     assert cfg.encoder_backend == "nvenc"
-    assert (tmp_path / "video_reducer.log").exists()
+    assert (tmp_path / "jelly_coder.log").exists()
 
 
 def test_main_interactive(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -148,7 +148,7 @@ def test_main_interactive(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert cfg.preferred_codec is None
     assert cfg.quality == "480p"
     assert cfg.encoder_backend == "qsv"
-    assert (tmp_path / "video_reducer.log").exists()
+    assert (tmp_path / "jelly_coder.log").exists()
 
 
 def test_main_writes_log_to_output_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -171,7 +171,7 @@ def test_main_writes_log_to_output_directory(monkeypatch: pytest.MonkeyPatch, tm
     cli.main([])
     cfg = captured["config"]
     assert cfg.output_root == output_dir
-    log_path = output_dir / "video_reducer.log"
+    log_path = output_dir / "jelly_coder.log"
     assert log_path.exists()
 
 
@@ -197,7 +197,7 @@ def test_main_writes_log_to_default_output(monkeypatch: pytest.MonkeyPatch, tmp_
     cli.main([])
     cfg = captured["config"]
     assert cfg.output_root is None
-    log_path = tmp_path / "output" / input_dir.name / "video_reducer.log"
+    log_path = tmp_path / "output" / input_dir.name / "jelly_coder.log"
     assert log_path.exists()
 
 
@@ -205,7 +205,7 @@ def test_package_main_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     called = {}
     import importlib
 
-    importlib.import_module("video_reducer.__main__")
+    importlib.import_module("jelly_coder.__main__")
     monkeypatch.setattr(cli, "main", lambda argv=None: called.update({"ran": True}))
-    runpy.run_module("video_reducer.__main__", run_name="__main__")
+    runpy.run_module("jelly_coder.__main__", run_name="__main__")
     assert called == {"ran": True}

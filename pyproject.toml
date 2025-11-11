@@ -30,22 +30,22 @@ Repository = "https://github.com/0x78f1935/JellyCoder"
 Issues = "https://github.com/0x78f1935/JellyCoder/issues"
 
 [project.scripts]
-encode-videos = "video_reducer.cli:main"
+encode-videos = "jelly_coder.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "flake8", "build", "twine"]
 
 [tool.setuptools]
-packages = ["video_reducer"]
+packages = ["jelly_coder"]
 py-modules = ["encode_videos"]
 
 [tool.pytest.ini_options]
-addopts = "-q --cov=video_reducer --cov=encode_videos --cov-report=term-missing"
+addopts = "-q --cov=jelly_coder --cov=encode_videos --cov-report=term-missing"
 testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["video_reducer", "encode_videos"]
+source = ["jelly_coder", "encode_videos"]
 
 [tool.coverage.report]
 show_missing = true

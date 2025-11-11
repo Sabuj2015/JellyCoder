@@ -62,7 +62,7 @@ def _prompt_backend(default: str = "auto") -> str:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="video_reducer",
+        prog="jelly_coder",
         description="Reduce video sizes using NVIDIA NVENC while keeping Jellyfin compatibility.",
     )
     parser.add_argument("input", nargs="?", help="Path to the input directory containing videos.")
@@ -146,7 +146,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             log_dir = Path.cwd() / "output" / input_path.name
         log_dir = log_dir.resolve(strict=False)
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "video_reducer.log"
+    log_path = log_dir / "jelly_coder.log"
 
     file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
     file_handler.setFormatter(formatter)

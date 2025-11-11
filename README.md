@@ -5,7 +5,7 @@
 
 ## Overview
 
-`video_reducer` scans a folder for supported videos (`.mkv`, `.mp4`, `.wmv`, `.mwv`) and re-encodes them with size-aware defaults. It keeps subtitles/metadata, flips containers when MP4 constraints are violated, and preserves a mirrored directory tree when you choose not to overwrite in place.
+`jelly_coder` scans a folder for supported videos (`.mkv`, `.mp4`, `.wmv`, `.mwv`) and re-encodes them with size-aware defaults. It keeps subtitles/metadata, flips containers when MP4 constraints are violated, and preserves a mirrored directory tree when you choose not to overwrite in place.
 
 Key capabilities:
 
@@ -34,13 +34,13 @@ pip install -e .
 
 ```powershell
 # Show CLI help
-python -m video_reducer --help
+python -m jelly_coder --help
 
 # Reduce a folder, mirror outputs under ./output/<dir>, auto-select backend
-python -m video_reducer --input D:\media --quality 720p
+python -m jelly_coder --input D:\media --quality 720p
 
 # Force Intel QSV, enable overwrite, run at debug verbosity
-python -m video_reducer --input D:\media --encoder-backend qsv --overwrite --log-level debug
+python -m jelly_coder --input D:\media --encoder-backend qsv --overwrite --log-level debug
 
 # Legacy wrapper remains available
 python encode_videos.py --input D:\media
@@ -79,7 +79,7 @@ python encode_videos.py --input D:\media
 ## Development
 
 - Run `python -m pytest` and `flake8` before committing; coverage is enforced at 100%.
-- `python -m video_reducer --help` verifies CLI wiring after refactors.
+- `python -m jelly_coder --help` verifies CLI wiring after refactors.
 - VS Code launchers in `.vscode/launch.json` provide ready-to-run debug sessions.
 
 ## Troubleshooting

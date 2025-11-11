@@ -5,7 +5,7 @@
             "name": "Video Reducer: CLI",
             "type": "debugpy",
             "request": "launch",
-            "module": "video_reducer.cli",
+            "module": "jelly_coder.cli",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true

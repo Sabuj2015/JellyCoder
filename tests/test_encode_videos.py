@@ -4,7 +4,7 @@ import runpy
 
 def test_encode_videos_main(monkeypatch):
     called = {}
-    import video_reducer.cli as cli
+    import jelly_coder.cli as cli
 
     monkeypatch.setattr(cli, "main", lambda argv=None: called.update({"ran": True, "argv": argv}))
 
@@ -15,7 +15,7 @@ def test_encode_videos_main(monkeypatch):
 
 def test_encode_videos_module_execution(monkeypatch):
     called = {}
-    import video_reducer.cli as cli
+    import jelly_coder.cli as cli
 
     monkeypatch.setattr(cli, "main", lambda argv=None: called.update({"ran": True}))
     runpy.run_module("encode_videos", run_name="__main__")

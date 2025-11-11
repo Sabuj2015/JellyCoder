@@ -9,7 +9,7 @@ from typing import Callable
 
 import pytest
 
-from video_reducer import core
+from jelly_coder import core
 
 
 def make_media_info(**overrides: object) -> core.MediaInfo:
